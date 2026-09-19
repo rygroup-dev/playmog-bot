@@ -129,6 +129,7 @@ export class Autopilot {
     if (!this.market) return 0;
     const dayStart = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z").getTime();
     if (this.store.countSince(dayStart, "buy_item", "% key.world %") >= st.worldBuysPerDay) return 0;
+    if (this.market.instantPausedUntil > Date.now() || (this.market.state().serverPausedUntil ?? 0) > Date.now()) return 0; // marketplace closed: no deposit, no order
     const valor = Number((await this.api.get("/api/shop/valor/balance")).valorBalance);
     const mm = this.market.cfg(); const mmState = this.market.state();
     const mmCommitted = mm.enabled ? Math.max(0, mm.capitalValor - 0) : 0;
@@ -137,7 +138,16 @@ export class Autopilot {
     if (!price || price > st.worldKeyMaxPrice) return 0;
     // free VALOR = balance minus what market-making still needs to rebuy its current positions
     const mmNeeds = mm.enabled ? Math.max(0, mmCommitted - Object.values(mmState.pos).reduce((t, p) => t + p.cost * p.qty, 0)) : 0;
-    if (valor - price < Math.min(mmNeeds, valor)) { this.log("eve key: skipped, VALOR reserved for market capital"); return 0; }
+    if (valor - price < Math.min(mmNeeds, valor)) {
+      // market capital is untouchable: pay Eve Keys from wallet USDC.e instead (1 USDC.e = 100 VALOR, deposit has no fee)
+      const left = st.worldBuysPerDay - this.store.countSince(dayStart, "buy_item", "% key.world %");
+      const usdNeed = Math.ceil((price * left - Math.max(0, valor - mmNeeds)) / 100);
+      const usdc = Number((await this.abs.balances()).usdc) / 1e6;
+      if (!this.claims || usdNeed <= 0 || usdc - usdNeed < st.worldUsdcReserve) { this.log(`eve key: skipped, VALOR reserved for market and USDC.e ${usdc.toFixed(2)} too low`); return 0; }
+      const d = await this.claims.depositValorUsd(usdNeed);
+      this.store.ledger("valor_topup", usdNeed, `Eve Key budget (${left} key)`, d.hash);
+      this.store.event("info", `eve key: deposited ${usdNeed} USDC.e → VALOR`);
+    }
     try {
       const r = await this.market.instantBuy("key.world", price, 1);
       if (r.filled) { await this.notify(`🗝 <b>Eve Key dibeli</b> @ ${r.price} VALOR (otomatis, maks ${st.worldBuysPerDay}×/hari)`); return r.filled; }

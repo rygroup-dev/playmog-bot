@@ -31,7 +31,7 @@ tg.ensureClaimCode();
 await tg.setupProfile().catch((e) => log(`setupProfile: ${e.message}`));
 void tg.bot.start({ drop_pending_updates: true, onStart: (i) => log(`telegram @${i.username} online`) });
 autopilot.start(60_000);
-const stopWatchers = startWatchers({ game: gameWatch, fund: fundWatch }, log);
+const stopWatchers = startWatchers({ game: gameWatch, fund: fundWatch, market }, log);
 log(`playmog-bot started, wallet ${account.address}`);
 
 const shutdown = async (sig: string) => {

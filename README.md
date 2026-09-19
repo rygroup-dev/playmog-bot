@@ -32,6 +32,7 @@ The bot plays runs by itself, claims every free reward, runs a small market-maki
 **Marketplace**
 - Market-making pilot: scores every tradable item by net edge after fees, daily volume, buyer count, volatility and price trend, then quotes the best ones (buy at best bid + 1, list at best ask − 1).
 - Never sells below break-even except on stop-loss, never undercuts its own listing, and halts completely at a loss limit.
+- Watches marketplace availability, with limit orders and instant buys tracked separately, and sends 🔴 closed and 🟢 open alerts. The instant-buy probe is a fill-or-kill order at 1 VALOR, so it can never fill or rest on the book. When instant buys are disabled, item purchases fall back to a limit order at the lowest ask.
 
 **Telegram**
 - Private: only configured owners can use the bot. Every spend needs an explicit confirm button, and quotes expire.

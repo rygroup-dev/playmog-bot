@@ -108,7 +108,8 @@ export class GameWatch {
       if (deployed && !first) {
         next.history = [{ at: now, rev: next.rev, appVersion: APP_VERSION, changes }, ...s.history].slice(0, 10);
         this.store.event("info", `game deploy ${short(s.rev)} → ${short(next.rev)}${changes.length ? ": " + changes.join(" | ").replace(/<[^>]+>/g, "") : ""}`);
-        const mkt = this.market ? ((this.market.state().serverPausedUntil ?? 0) > now ? "⏸ dimatikan server (bot coba lagi tiap 15 menit)" : "🟢 normal") : "-";
+        const ms = this.market?.status(); const lbl = (v: boolean | null | undefined) => v === false ? "🔴 tutup" : v ? "🟢 buka" : "?";
+        const mkt = ms ? `order limit ${lbl(ms.gtc)} · beli instan ${lbl(ms.fok)}` : "-";
         await this.notify([
           "🆕 <b>UPDATE GAME TERDETEKSI</b>",
           `Deploy <code>${short(s.rev)}</code> → <code>${short(next.rev)}</code>`,
@@ -175,11 +176,13 @@ export class FundWatch {
   }
 }
 
-export function startWatchers(w: { game: GameWatch; fund: FundWatch }, log: (m: string) => void) {
+export function startWatchers(w: { game: GameWatch; fund: FundWatch; market?: MarketMaker }, log: (m: string) => void) {
   const run = (name: string, fn: () => Promise<unknown>) => fn().catch((e) => log(`${name}: ${e?.message ?? e}`));
   void run("game-watch", () => w.game.check());
   void run("fund-watch", () => w.fund.check());
   const t1 = setInterval(() => void run("game-watch", () => w.game.check()), 5 * 60_000);
   const t2 = setInterval(() => void run("fund-watch", () => w.fund.check()), 2 * 60_000);
-  return () => { clearInterval(t1); clearInterval(t2); };
+  const probe = () => w.market ? run("market-probe", () => w.market!.probeStatus()) : Promise.resolve();
+  void probe(); const t3 = setInterval(() => void probe(), 5 * 60_000); // market open/closed detection
+  return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); };
 }

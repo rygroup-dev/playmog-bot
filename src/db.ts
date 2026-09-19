@@ -8,7 +8,7 @@ export type Settings = {
   expeditionReserveKeys: number; notifyEveryRun: boolean; paused: boolean; acceptRooms: string[];
   autoWithdraw: boolean; withdrawReserveValor: number;
   autoWorld: boolean; autoRedeemCaches: boolean; autoSellLoot: boolean;
-  worldBuysPerDay: number; worldKeyMaxPrice: number; playOwnedArcadeKeys: boolean;
+  worldBuysPerDay: number; worldKeyMaxPrice: number; worldUsdcReserve: number; playOwnedArcadeKeys: boolean;
 };
 export const DEFAULT_SETTINGS: Settings = {
   autoDaily: true, autoUpvote: true, autoExpedition: true, autoArcade: false,
@@ -16,7 +16,7 @@ export const DEFAULT_SETTINGS: Settings = {
   expeditionReserveKeys: 0, notifyEveryRun: true, paused: false, acceptRooms: ["shrine", "armory", "jackalot"],
   autoWithdraw: true, withdrawReserveValor: 1000,
   autoWorld: false, autoRedeemCaches: true, autoSellLoot: true,
-  worldBuysPerDay: 3, worldKeyMaxPrice: 250, playOwnedArcadeKeys: true,
+  worldBuysPerDay: 3, worldKeyMaxPrice: 250, worldUsdcReserve: 3, playOwnedArcadeKeys: true,
 };
 
 export class Store {

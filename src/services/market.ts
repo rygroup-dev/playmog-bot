@@ -86,11 +86,45 @@ export class MarketMaker {
   private async place(side: "BUY" | "SELL", a: any, price: number, quantity = 1) {
     const r = await this.api.post(`${B}/orders`, { side, timeInForce: "GTC", assetKey: a.assetKey, assetType: a.assetType, assetId: a.assetId ?? null, price, quantity, idempotencyKey: randomUUID() });
     this.store.event("info", `mm ${side} ${a.assetKey} @${price} → fills ${JSON.stringify(r.fills?.length ?? 0)}`);
+    await this.setStatus("gtc", true);
     const id = r.order?.id ?? r.id ?? r.orderId;
     if (id && this.cur) this.cur.tracked[id] = { id, side, key: a.assetKey, price, qty: quantity, name: a.displayName };
     return r;
   }
   private cur: MMState | null = null;
+  /** Orders placed to BUY FOR USE (Eve Keys, probes): never adopted or booked as market-making fills. */
+  private ownUse = new Set<string>();
+
+  /** Live marketplace availability, detected separately for limit orders (GTC) and instant buys (FOK). */
+  status() { return { gtc: null as boolean | null, fok: null as boolean | null, gtcAt: 0, fokAt: 0, ...this.store.get<any>("market.status", {}) }; }
+  async setStatus(kind: "gtc" | "fok", open: boolean) {
+    const st = this.status(); if (st[kind] === open) return;
+    const known = st[kind] !== null;
+    this.store.set("market.status", { ...st, [kind]: open, [kind + "At"]: Date.now() });
+    this.store.event(open ? "info" : "warn", `market ${kind} ${open ? "OPEN" : "CLOSED"} (server)`);
+    if (!known && open) return; // first observation of a normal state: nothing to report
+    const what = kind === "gtc" ? "Order limit (market-making, jual loot)" : "Beli instan (FOK)";
+    await this.notify(open
+      ? `🟢 <b>MARKET DIBUKA</b> — ${what} aktif lagi di server.${kind === "gtc" ? "\nMarket-making & jual loot lanjut otomatis." : "\nBeli Eve Key kembali pakai beli instan."}`
+      : `🔴 <b>MARKET DITUTUP</b> — ${what} dimatikan server game (FEATURE_DISABLED).${kind === "gtc" ? "\nOrder lama tetap di buku; bot cek ulang tiap 5 menit." : "\nBeli Eve Key otomatis pindah ke order limit di harga ask."}`);
+  }
+  /** Zero-cost probes: FOK buy at 1 VALOR can never fill nor rest; a GTC probe (1 VALOR, cancelled at once) runs only while GTC is believed closed. */
+  async probeStatus() {
+    const a = (await this.summary()).get("key.world"); if (!a) return this.status();
+    const body = (tif: string) => ({ side: "BUY", timeInForce: tif, assetKey: a.assetKey, assetType: a.assetType, assetId: a.assetId ?? null, price: 1, quantity: 1, idempotencyKey: randomUUID() });
+    try { await this.api.post(`${B}/orders`, body("FOK")); await this.setStatus("fok", true); }
+    catch (e: any) { if (e?.code === "FEATURE_DISABLED") await this.setStatus("fok", false); else throw e; }
+    const s = this.status();
+    if (s.gtc === false || (this.state().serverPausedUntil ?? 0) > Date.now()) {
+      try {
+        const r = await this.api.post(`${B}/orders`, body("GTC")); const id = r.order?.id ?? r.id ?? r.orderId;
+        if (id) { this.ownUse.add(id); await this.api.request(`${B}/orders/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {}); }
+        const st = this.state(); if (st.serverPausedUntil) { st.serverPausedUntil = 0; this.save(st); }
+        await this.setStatus("gtc", true);
+      } catch (e: any) { if (e?.code === "FEATURE_DISABLED") await this.setStatus("gtc", false); else throw e; }
+    }
+    return this.status();
+  }
   private async cancel(id: string) {
     const r = await this.api.request(`${B}/orders/${encodeURIComponent(id)}`, { method: "DELETE" });
     if (this.cur) delete this.cur.tracked[id]; // we cancelled it: not a fill
@@ -101,8 +135,9 @@ export class MarketMaker {
   private async syncTracked(s: MMState, open: any[]) {
     const openIds = new Set(open.map((o) => o.id));
     // adopt open orders we did not track yet (e.g. placed before a restart) — this wallet only trades via the bot
-    for (const o of open) if (!s.tracked[o.id]) s.tracked[o.id] = { id: o.id, side: o.side, key: o.assetKey, price: Number(o.price), qty: Number(o.quantity) - Number(o.filledQty ?? 0), name: o.asset?.displayName ?? o.assetKey, loot: o.side === "SELL" && !(s.pos[o.assetKey]?.qty > 0) };
+    for (const o of open) if (!s.tracked[o.id] && !this.ownUse.has(o.id)) s.tracked[o.id] = { id: o.id, side: o.side, key: o.assetKey, price: Number(o.price), qty: Number(o.quantity) - Number(o.filledQty ?? 0), name: o.asset?.displayName ?? o.assetKey, loot: o.side === "SELL" && !(s.pos[o.assetKey]?.qty > 0) };
     for (const t of Object.values(s.tracked)) {
+      if (this.ownUse.has(t.id)) { delete s.tracked[t.id]; continue; }
       if (openIds.has(t.id)) continue;
       delete s.tracked[t.id];
       if (t.loot) { // our own run loot: separate books, no effect on market-making P&L
@@ -162,7 +197,7 @@ export class MarketMaker {
     try {
       if (s.halted) return;
       if ((s.serverPausedUntil ?? 0) > Date.now()) return;
-      if (s.serverPausedUntil) { s.serverPausedUntil = 0; await this.notify("▶️ <b>Market aktif lagi</b> — server membuka kembali marketplace."); }
+      if (s.serverPausedUntil) s.serverPausedUntil = 0; // re-opened: probeStatus / next successful order reports it
       await this.syncFills(s, cfg);
       await this.syncTracked(s, await this.myOrders());
       if (s.realized <= -cfg.maxLossValor) {
@@ -247,7 +282,7 @@ export class MarketMaker {
         if (committed() + buyAt > cfg.capitalValor || valor < buyAt) continue;
         const r = await this.place("BUY", a, buyAt, 1);
         valor -= buyAt;
-        if (!myBuy) await this.notify(`📝 <b>Market: ORDER BELI</b> 1 × ${a.displayName} @ ${buyAt} VALOR (target jual ~${sellAt}, edge +${Math.round(edge)})`);
+        if (!myBuy) await this.notify(`📝 <b>Market: pasang order beli</b> (belum terbeli) 1 × ${a.displayName} @ ${buyAt} VALOR (target jual ~${sellAt}, edge +${Math.round(edge)})`);
         void r;
       }
       this.lastError = null;
@@ -256,19 +291,45 @@ export class MarketMaker {
       if (e?.code === "FEATURE_DISABLED") {
         const first = !s.serverPausedUntil || s.serverPausedUntil < Date.now();
         s.serverPausedUntil = Date.now() + 15 * 60e3;
-        if (first) { this.store.event("warn", "market disabled by the game server — retrying every 15 min"); await this.notify("⏸ <b>Market dimatikan sementara oleh server game</b> (FEATURE_DISABLED). Order lama tetap aktif; bot coba lagi tiap 15 menit."); }
+        void first; await this.setStatus("gtc", false);
       } else this.store.event("warn", `mm: ${this.lastError}`);
     } finally { this.save(s); this.busy = false; }
   }
 
   /** Instant buy (fill-or-kill) at the lowest ask if it is within maxPrice. Returns units filled. */
-  async instantBuy(assetKey: string, maxPrice: number, quantity = 1) {
+  /** Set when neither instant nor limit buys are accepted; in-memory so it never races the tick's saved state. */
+  instantPausedUntil = 0;
+  /**
+   * Buy for USE (not market-making) at the lowest ask if within maxPrice. Instant (FOK) when the server allows it,
+   * otherwise a GTC order at the ask (fills against it immediately; any unfilled rest is cancelled after 3 s).
+   */
+  async instantBuy(assetKey: string, maxPrice: number, quantity = 1): Promise<{ filled: number; price: number | null; paused?: boolean; via?: string }> {
+    if (this.instantPausedUntil > Date.now() || (this.state().serverPausedUntil ?? 0) > Date.now()) return { filled: 0, price: null, paused: true };
     const a = (await this.summary()).get(assetKey);
     if (!a?.lowestAsk || Number(a.lowestAsk) > maxPrice) return { filled: 0, price: a?.lowestAsk ? Number(a.lowestAsk) : null };
-    const r = await this.api.post(`${B}/orders`, { side: "BUY", timeInForce: "FOK", assetKey, assetType: a.assetType, assetId: a.assetId ?? null, price: Number(a.lowestAsk), quantity, idempotencyKey: randomUUID() });
-    const filled = (r.fills ?? []).reduce((t: number, f: any) => t + Number(f.quantity), 0);
-    if (filled) this.store.ledger("buy_item", (Number(a.lowestAsk) * filled) / 100, `${filled} ${assetKey} @${a.lowestAsk}`);
-    return { filled, price: Number(a.lowestAsk) };
+    const price = Number(a.lowestAsk);
+    const order = (tif: string) => this.api.post(`${B}/orders`, { side: "BUY", timeInForce: tif, assetKey, assetType: a.assetType, assetId: a.assetId ?? null, price, quantity, idempotencyKey: randomUUID() });
+    const book = (filled: number, via: string) => { if (filled) this.store.ledger("buy_item", (price * filled) / 100, `${filled} ${assetKey} @${price} (${via})`); return { filled, price, via }; };
+    if (this.status().fok !== false) {
+      try { const r = await order("FOK"); await this.setStatus("fok", true); return book((r.fills ?? []).reduce((t: number, f: any) => t + Number(f.quantity), 0), "instant"); }
+      catch (e: any) { if (e?.code !== "FEATURE_DISABLED") throw e; await this.setStatus("fok", false); }
+    }
+    let r: any;
+    try { r = await order("GTC"); await this.setStatus("gtc", true); }
+    catch (e: any) {
+      if (e?.code !== "FEATURE_DISABLED") throw e;
+      this.instantPausedUntil = Date.now() + 5 * 60e3; await this.setStatus("gtc", false);
+      return { filled: 0, price, paused: true };
+    }
+    const id = r.order?.id ?? r.id ?? r.orderId; if (id) this.ownUse.add(id);
+    let filled = (r.fills ?? []).reduce((t: number, f: any) => t + Number(f.quantity), 0);
+    if (filled < quantity && id) {
+      await new Promise((res) => setTimeout(res, 3000));
+      const o = (await this.myOrders()).find((x) => x.id === id);
+      if (o) { await this.api.request(`${B}/orders/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {}); filled = Number(o.filledQty ?? filled); }
+      else filled = quantity; // left the book without our cancel → filled
+    }
+    return book(filled, "limit");
   }
 
   /**

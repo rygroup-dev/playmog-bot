@@ -410,6 +410,8 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
     const days = Math.max(0.01, (Date.now() - st.startedAt) / 864e5);
     const lines = [header("📈", "MARKET-MAKING PILOT", c.enabled ? (st.halted ? "HALTED" : "AKTIF") : "OFF"),
       row("Status", c.enabled ? (st.halted ? `🛑 ${esc(st.halted)}` : "🟢 berjalan tiap menit") : "⚫️ mati"),
+      (() => { const m = market.status(); const l = (v: boolean | null) => v === false ? "🔴 tutup" : v ? "🟢 buka" : "⚪️ ?";
+        return row("Server market", `order limit ${l(m.gtc)} · beli instan ${l(m.fok)}`); })(),
       row("Modal", `${num(c.capitalValor)} VALOR (${usd(c.capitalValor / 100, 0)}) · saldo VALOR ${num(valor)}`),
       row("Profit terealisasi", `<b>${pnl >= 0 ? "+" : ""}${num(pnl)} VALOR</b> (${pnl >= 0 ? "+" : ""}${usd(pnl / 100)})`),
       row("Belum terealisasi", `${r.unrealized >= 0 ? "+" : ""}${num(r.unrealized)} VALOR`),
