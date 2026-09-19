@@ -1,5 +1,5 @@
 import type { Action, RunAction } from "./room.js";
-import { Board, DIRS, dangerMap, dirTo, enemyConfig, key, manhattan, step, type P } from "./model.js";
+import { Board, DIRS, dangerMap, dirTo, enemyConfig, footprint, key, manhattan, step, type P } from "./model.js";
 import { chooseItem, ITEM_VALUE } from "./items.js";
 import { breakValue, killCost, killValue, pickupValue, type Ctx } from "./value.js";
 import talentTable from "./talents.json" with { type: "json" };
@@ -60,8 +60,8 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   if (room === "shrine" || room === "armory") {
     const p = g.player;
     const targets = (g.interactive ?? []).filter((i: any) => room === "shrine"
-      ? i.v2NpcType === "shrine" && p.energy <= p.maxEnergy - 20 && p.treasure >= shrineCost(p.v2ShrineUseCount ?? 0) && shrineCost(p.v2ShrineUseCount ?? 0) <= 50
-      : typeof i.v2ArmoryItemId === "string" && (i.v2ArmoryCost ?? 0) <= Math.max(10, p.treasure * 0.15) && p.treasure >= (i.v2ArmoryCost ?? 0)
+      ? i.v2NpcType === "shrine" && p.energy <= p.maxEnergy - 20 && wallet(g) >= scaled(g, shrineCost(p.v2ShrineUseCount ?? 0)) && shrineCost(p.v2ShrineUseCount ?? 0) <= 50
+      : typeof i.v2ArmoryItemId === "string" && scaled(g, i.v2ArmoryCost ?? 0) <= Math.max(scaled(g, 10), wallet(g) * 0.15) && wallet(g) >= scaled(g, i.v2ArmoryCost ?? 0)
         && (ITEM_VALUE[i.v2ArmoryItemId] ?? 0) >= 6 && (p.items?.slots ?? []).filter((x: any) => x?.state === "unused").length < 2);
     for (const t of targets) {
       const d = dirTo(me, t);
@@ -96,7 +96,8 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
     if ((mem.dodges.get(id) ?? 0) >= 3) return false;                   // loop guard
     return (enemyConfig(e)?.chargeTurns ?? 1) >= 2;
   }) : false;
-  if (here && here.dmg > 2 && (dodgeWorth || here.dmg >= 10)) { // several attackers firing together: always step out
+  const inArena = (g.v2CurrentRoomType ?? null) === "jackalot"; // movement costs no energy in the bounty arena
+  if (here && (inArena ? here.dmg > 0 : here.dmg > 2 && (dodgeWorth || here.dmg >= 10))) { // several attackers firing together: always step out
     const safe = DIRS.map((d) => ({ d, p: step(me, d) }))
       .filter(({ p }) => b.walkable(p.x, p.y) && !b.enemyAt.has(key(p.x, p.y)))
       .map((o) => ({ ...o, risk: D.get(key(o.p.x, o.p.y))?.dmg ?? 0 }))
@@ -152,7 +153,10 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   }
   for (const e of g.enemies ?? []) {
     if (b.enemyAt.get(key(e.x, e.y)) !== e) continue;
-    const a = reachAdj(e); if (!a) continue;
+    // big bosses: any tile touching the footprint is a valid attack position
+    const f = footprint(e); let a: { k: string; d: number } | null = null;
+    for (let y = f.top; y <= f.bottom; y++) for (let x = f.left; x <= f.right; x++) { const c = reachAdj({ x, y }); if (c && (!a || c.d < a.d)) a = c; }
+    if (!a) continue;
     const cost = a.d + killCost(e, ctx) * riskAversion;
     if (!affordable(cost)) continue;
     const bonus = String(e.id).startsWith("v2_spawned_") ? 4 : 0;       // kill spawn to drop the spawner's shield
@@ -201,10 +205,15 @@ function wantsRoom(prompt: any, g: any, cfg: PolicyConfig) {
   if (rt === null) return true;
   if (!(cfg.acceptRooms ?? []).includes(rt)) return false;
   const p = g.player;
-  if (rt === "shrine") return p.energy <= p.maxEnergy - 20 && p.treasure >= shrineCost(p.v2ShrineUseCount ?? 0);
-  if (rt === "armory") return p.treasure >= 60 && (p.items?.slots ?? []).filter((x: any) => x?.state === "unused").length < 2;
+  if (rt === "shrine") return p.energy <= p.maxEnergy - 20 && wallet(g) >= scaled(g, shrineCost(p.v2ShrineUseCount ?? 0));
+  if (rt === "armory") return wallet(g) >= scaled(g, 60) && (p.items?.slots ?? []).filter((x: any) => x?.state === "unused").length < 2;
   return true; // jackalot etc.: movement is free inside
 }
+/** WORLD runs pay shrine/armory in amber (worldseeds) at 1/10 of the price (client fns eS / ex). */
+export const isWorld = (g: any) => g?.runType === "WORLD";
+export const wallet = (g: any) => (isWorld(g) ? g.player.amber ?? 0 : g.player.treasure ?? 0);
+export const scaled = (g: any, cost: number) => (cost === 0 ? 0 : isWorld(g) ? Math.max(1, Math.floor(cost / 10)) : cost);
+
 /** Shrine price per use (client fn eE): 10, 20, 30, 50, 80, 130 ... ; heal is always +20 energy. */
 export function shrineCost(uses: number) {
   if (uses <= 0) return 10; if (uses === 1) return 20;

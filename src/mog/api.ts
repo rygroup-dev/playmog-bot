@@ -2,8 +2,21 @@
 import type { PrivateKeyAccount } from "viem/accounts";
 
 export const MOG_BASE = "https://playmog.xyz";
-export const APP_VERSION = process.env.MOG_APP_VERSION ?? "24";
-const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36";
+export let APP_VERSION = process.env.MOG_APP_VERSION ?? "24";
+
+/** Read the live client's APP_VERSION from the site bundle (used when the server says CLIENT_OUTDATED). */
+export async function detectAppVersion(): Promise<string | null> {
+  try {
+    const html = await (await fetch(MOG_BASE + "/", { headers: { "user-agent": UA }, signal: AbortSignal.timeout(20_000) })).text();
+    const chunks = [...new Set(html.match(/\/_next\/static\/immutable\/chunks\/[A-Za-z0-9_-]+\.js/g) ?? [])];
+    for (const c of chunks) {
+      const js = await (await fetch(MOG_BASE + c, { signal: AbortSignal.timeout(20_000) })).text().catch(() => "");
+      const m = js.match(/APP_VERSION",0,(\d+)/); if (m) return m[1];
+    }
+  } catch { /* offline */ }
+  return null;
+}
+export const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36";
 
 export class MogApiError extends Error {
   constructor(public status: number, public code: string | null, message: string, public body?: unknown) { super(message); this.name = "MogApiError"; }
@@ -12,6 +25,7 @@ export class MogApiError extends Error {
 export class MogApi {
   private cookies = new Map<string, string>();
   private loginInFlight: Promise<void> | null = null;
+  private versionRefreshed = false;
   constructor(private account: PrivateKeyAccount, private opts: { timeoutMs?: number; log?: (m: string) => void } = {}) {}
 
   get address() { return this.account.address; }
@@ -76,6 +90,11 @@ export class MogApi {
       let body: any = null; try { body = text ? JSON.parse(text) : null; } catch { body = text; }
       if (!r.ok) {
         const code = body?.error?.code ?? (typeof body?.error === "string" ? body.error : null);
+        if (code === "CLIENT_OUTDATED" && !this.versionRefreshed) {
+          this.versionRefreshed = true;
+          const v = await detectAppVersion();
+          if (v && v !== APP_VERSION) { this.opts.log?.(`mog: client version ${APP_VERSION} -> ${v}`); APP_VERSION = v; attempt--; continue; }
+        }
         throw new MogApiError(r.status, code, `${method} ${path} -> ${r.status} ${code ?? ""} ${body?.error?.message ?? (typeof body === "string" ? body.slice(0, 200) : "")}`.trim(), body);
       }
       return body as T;

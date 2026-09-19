@@ -7,7 +7,7 @@ import { decide, newMemory, DEFAULT_POLICY, type PolicyConfig } from "./policy.j
 export type RunType = "NORMAL" | "EXPEDITION" | "WORLD";
 export interface RunSummary {
   runId: string; runType: RunType; keysUsed: number; turns: number; floor: number; status: string;
-  treasure: number; marbles: number; arcadeKeys: number; kills: number; energyLeft: number; level: number;
+  treasure: number; marbles: number; arcadeKeys: number; amber: number; raffleTickets: number; kills: number; energyLeft: number; level: number;
   damageTaken: number; unpredictedHits: number; avgRttMs: number; endReason: string; lootEvents: Record<string, number>;
 }
 export interface RunnerHooks { onTurn?: (t: { turn: number; reason: string; g: any; events: any[] }) => void; shouldStop?: () => boolean; log?: (m: string) => void }
@@ -61,7 +61,7 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
           const amt = Number(ev.amount ?? ev.damage ?? 0); damageTaken += amt;
           if (!dec.danger.includes(`${g.player.x},${g.player.y}`)) unpredicted++;
         }
-        if (["pickup_collected", "item_collected", "treasure", "marble", "arcade_key", "gem", "jackpot", "raffle_ticket"].includes(ev.type)) {
+        if (["pickup_collected", "item_collected", "treasure", "marble", "arcade_key", "gem", "jackpot", "raffle_ticket", "amber"].includes(ev.type)) {
           const k = ev.pickupType ?? ev.itemType ?? ev.type; loot[k] = (loot[k] ?? 0) + Number(ev.amount ?? ev.value ?? 1);
         }
       }
@@ -87,7 +87,7 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
   await room.leave();
   const p = g.player;
   return { runId, runType, keysUsed: g.keysUsed, turns: g.turnNumber, floor: g.currentFloor, status: g.status, treasure: p.treasure, marbles: p.marbles,
-    arcadeKeys: p.arcadeKeys, kills: p.totalEnemiesKilled, energyLeft: p.energy, level: p.level, damageTaken, unpredictedHits: unpredicted,
+    arcadeKeys: p.arcadeKeys, amber: p.amber ?? 0, raffleTickets: p.raffleTickets ?? 0, kills: p.totalEnemiesKilled, energyLeft: p.energy, level: p.level, damageTaken, unpredictedHits: unpredicted,
     avgRttMs: rttN ? Math.round(rttSum / rttN) : 0, endReason, lootEvents: loot };
 }
 

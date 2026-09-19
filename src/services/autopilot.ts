@@ -33,21 +33,40 @@ export class Autopilot {
       if (st.autoUpvote) await this.safe("upvote", () => this.upvote());
       await this.safe("quests", () => this.claimQuests());
       if (this.market) await this.safe("market", () => this.market!.tick());
+      const st0 = st;
       if (Date.now() - this.lastSlowTick > 30 * 60_000) { // money claims + reminders every 30 min
         this.lastSlowTick = Date.now();
         await this.safe("weekly-claim", () => this.autoClaims());
         await this.safe("pass-reminder", () => this.passReminder());
         await this.safe("daily-report", () => this.dailyReport());
         await this.safe("corn-raffle", () => this.autoRaffle());
+        if (st0.autoRedeemCaches) await this.safe("redeem-caches", () => this.autoRedeem());
+        if (st0.autoSellLoot && this.market) await this.safe("sell-loot", async () => {
+          const keep = ["key.expedition", "pass.adventurer_mint", "item.golden_corn"];
+          if (st0.autoWorld) keep.push("key.world");                               // needed to play World's Eve
+          const wb = await this.api.get("/api/world-bonus").catch(() => null);
+          if (wb?.hasStakedHero) keep.push("energy.small", "energy.medium", "energy.large"); // gas refuels our heroes
+          await this.market!.sellLoot(keep);
+        });
       }
       // resume any run left open (crash/restart) before starting new ones
-      for (const t of ["EXPEDITION", "NORMAL"] as RunType[]) {
+      for (const t of ["EXPEDITION", "NORMAL", "WORLD"] as RunType[]) {
         const a = await this.api.get(`/api/runs/active?runType=${t}`);
         if (a.activeRun) { await this.play(a.activeRun.id, t, true); return; }
       }
       if (st.autoExpedition) {
         const exp = (await this.api.get("/api/items/expedition-keys")).balance ?? 0;
         if (exp > st.expeditionReserveKeys) { await this.createAndPlay("EXPEDITION", 1); return; }
+      }
+      if (st.autoWorld) {
+        let eve = (await this.api.get("/api/items/world-keys")).balance ?? 0;
+        if (eve === 0) eve = await this.buyEveKeyIfAllowed();
+        if (eve > 0) { await this.createAndPlay("WORLD", 1); return; }
+      }
+      // Arcade keys we already own (e.g. from Eve caches) cost nothing to play — the EV gate only guards buying
+      if (st.playOwnedArcadeKeys) {
+        const ak = (await this.api.get("/api/keys/balance")).balance ?? 0;
+        if (ak > 0) { await this.createAndPlay("NORMAL", 1); return; }
       }
       if (st.autoArcade) await this.safe("arcade", () => this.maybeArcade());
       this.lastError = null;
@@ -92,16 +111,47 @@ export class Autopilot {
    */
   async autoRaffle() {
     if (!this.claims) return;
-    for (const pool of ["goldenCorn", "eveKeys"] as const) {
+    for (const pool of ["goldenCorn", "eveKeys", "genesis"] as const) {
       const r = await this.claims.raffleStatus(pool);
       const left = new Date(r.entryCloseTime).getTime() - Date.now();
       if (r.ticketBalance > 0 && left > 0 && left < 3 * 3600e3) {
         await this.claims.enterRaffle(pool, r.ticketBalance);
         const after = await this.claims.raffleStatus(pool);
         this.store.event("info", `raffle ${pool}: entered ${r.ticketBalance}`);
-        await this.notify(`🎟 <b>Undian ${pool === "goldenCorn" ? "Golden Corn" : "Eve Key"} (WL Yield Fields)</b>\nMasuk ${r.ticketBalance} tiket · total tiket kita ${after.userEntries} · peluang ≥1 WL ≈ ${(after.chanceAtLeastOne * 100).toFixed(1)}%\nDiundi ${new Date(r.drawTime).toISOString().slice(0, 16).replace("T", " ")} UTC`);
+        await this.notify(`🎟 <b>Undian ${pool === "goldenCorn" ? "Golden Corn (WL Yield Fields)" : pool === "eveKeys" ? "Eve Key (WL Yield Fields)" : "Genesis Hero (5 NFT/minggu)"}</b>\nMasuk ${r.ticketBalance} tiket · total tiket kita ${after.userEntries} · peluang ≥1 WL ≈ ${(after.chanceAtLeastOne * 100).toFixed(1)}%\nDiundi ${new Date(r.drawTime).toISOString().slice(0, 16).replace("T", " ")} UTC`);
       }
     }
+  }
+
+  /** Auto-buy one Eve Key from the market: max worldBuysPerDay per UTC day, max price, never from market capital. */
+  async buyEveKeyIfAllowed(): Promise<number> {
+    const st = this.store.settings();
+    if (!this.market) return 0;
+    const dayStart = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z").getTime();
+    if (this.store.countSince(dayStart, "buy_item", "% key.world %") >= st.worldBuysPerDay) return 0;
+    const valor = Number((await this.api.get("/api/shop/valor/balance")).valorBalance);
+    const mm = this.market.cfg(); const mmState = this.market.state();
+    const mmCommitted = mm.enabled ? Math.max(0, mm.capitalValor - 0) : 0;
+    const a = (await this.market.summary()).get("key.world");
+    const price = Number(a?.lowestAsk ?? 0);
+    if (!price || price > st.worldKeyMaxPrice) return 0;
+    // free VALOR = balance minus what market-making still needs to rebuy its current positions
+    const mmNeeds = mm.enabled ? Math.max(0, mmCommitted - Object.values(mmState.pos).reduce((t, p) => t + p.cost * p.qty, 0)) : 0;
+    if (valor - price < Math.min(mmNeeds, valor)) { this.log("eve key: skipped, VALOR reserved for market capital"); return 0; }
+    try {
+      const r = await this.market.instantBuy("key.world", price, 1);
+      if (r.filled) { await this.notify(`🗝 <b>Eve Key dibeli</b> @ ${r.price} VALOR (otomatis, maks ${st.worldBuysPerDay}×/hari)`); return r.filled; }
+    } catch (e: any) { this.log(`eve key buy: ${e.message}`); }
+    return 0;
+  }
+
+  /** Worldseeds → World's Eve caches (500 each); contents go to inventory and are sold by the loot seller. */
+  async autoRedeem() {
+    if (!this.claims) return;
+    const r = await this.claims.redeemCaches(false);
+    if (!r) return;
+    this.store.event("info", `redeemed ${r.count} World's Eve cache(s)`);
+    await this.notify(`🎁 <b>${r.count} World's Eve Cache ditukar</b> (500 worldseed/cache) · sisa worldseed ${r.amber ?? "?"}\nIsinya masuk inventory; item yang laku dijual otomatis.`);
   }
 
   /** One summary per UTC day (sent on the first slow tick after 00:00 UTC). */
@@ -238,8 +288,8 @@ export function formatRun(s: RunSummary) {
     `${ok ? "🏁" : "⚠️"} <b>RUN ${s.runType} SELESAI</b>  <code>${s.runId.slice(-8)}</code>`,
     "━━━━━━━━━━━━━━━━━━━━",
     `  ◦ Floor: <b>${s.floor}</b> · Level ${s.level} · ${s.turns} turn`,
-    `  ◦ Treasure: <b>${s.treasure.toLocaleString("en-US")}</b>`,
-    `  ◦ Marbles: <b>${s.marbles}</b> · Arcade key: <b>${s.arcadeKeys}</b>`,
+    s.runType === "WORLD" ? "" : `  ◦ Treasure: <b>${s.treasure.toLocaleString("en-US")}</b>`,
+    s.runType === "WORLD" ? `  ◦ Worldseed: <b>${s.amber}</b> · Tiket raffle: <b>${s.raffleTickets}</b> · Marbles: ${s.marbles}` : `  ◦ Marbles: <b>${s.marbles}</b> · Arcade key: <b>${s.arcadeKeys}</b>`,
     `  ◦ Kill: ${s.kills} · Damage diterima: ${s.damageTaken}`,
     loot.length ? `  ◦ Loot: ${loot.map(([k, v]) => `${name[k] ?? k} ${v}`).join(" · ")}` : "",
     `  ◦ Latensi rata-rata: ${s.avgRttMs} ms`,

@@ -18,7 +18,13 @@ export interface EnemyCfg { hp: number; damage: number; damageMax?: number; atta
 export const ENEMIES = enemyCfg as Record<string, EnemyCfg>;
 export const enemyConfig = (e: any): EnemyCfg | undefined => ENEMIES[e.spriteType];
 
-export const isBlockingInteractive = (i: any) => ["pot", "crate", "chest", "rock"].includes(i.type);
+export const isBlockingInteractive = (i: any) => ["pot", "crate", "chest", "rock"].includes(i.type) || !!i.v2IsGate; // arena gate blocks until the boss dies
+
+/** Boss footprint (client fn eB): Sir Jackalot occupies x-1..x+1 × y-3..y; everything else is 1×1. */
+export const isBigBoss = (e: any) => e?.id === "v2_jackalot" || e?.spriteType === "v2_jackalot";
+export function footprint(e: any) {
+  return isBigBoss(e) ? { left: e.x - 1, right: e.x + 1, top: e.y - 3, bottom: e.y } : { left: e.x, right: e.x, top: e.y, bottom: e.y };
+}
 export const isBreakable = (i: any) => i.type === "pot" || i.type === "crate";
 export const isInvincible = (e: any) => (e.maxHp ?? 0) <= 0;
 
@@ -37,7 +43,10 @@ export class Board {
       if (i.type === "stairs") this.stairs.push(i);
     }
     for (const e of g.enemies ?? []) {
-      if (isInvincible(e)) this.blocked.add(key(e.x, e.y)); else this.enemyAt.set(key(e.x, e.y), e);
+      const f = footprint(e);
+      for (let y = f.top; y <= f.bottom; y++) for (let x = f.left; x <= f.right; x++) {
+        if (isInvincible(e)) this.blocked.add(key(x, y)); else this.enemyAt.set(key(x, y), e);
+      }
     }
     for (const p of g.pickups ?? []) this.pickupAt.set(key(p.x, p.y), p);
   }
@@ -82,6 +91,7 @@ export class Board {
 export function threatTiles(b: Board, e: any): Set<string> {
   const out = new Set<string>();
   const cfg = enemyConfig(e); const phase = e.v2AttackPhase ?? "idle";
+  if (isBigBoss(e)) return bossThreatTiles(b, e, phase);
   // "attack" = already fired this enemy phase (then "rest"); only a pending telegraph threatens us.
   if (!(phase === "charge" || phase === "preattack")) return out;
   const kind = cfg?.attackKind;
@@ -93,6 +103,28 @@ export function threatTiles(b: Board, e: any): Set<string> {
     const range = Math.max(1, cfg?.attackRange ?? 1);
     let p: P = { x: e.x, y: e.y };
     for (let i = 0; i < range; i++) { p = step(p, dir); if (!b.floor(p.x, p.y)) break; out.add(key(p.x, p.y)); }
+  }
+  return out;
+}
+
+/** Sir Jackalot telegraphs, exactly as the client's updateTelegraph(): a directional strike covers every lane
+ *  leaving the 3×4 footprint until a wall; leap_slam hits the ring around the footprint. The crouch that
+ *  precedes the slam is treated as dangerous too (moving is free in the arena, so over-dodging costs nothing). */
+function bossThreatTiles(b: Board, e: any, phase: string): Set<string> {
+  const out = new Set<string>(); const f = footprint(e); const dir: Dir | undefined = e.v2AttackDir;
+  if ((phase === "charge" || phase === "preattack") && dir) {
+    if (dir === "up" || dir === "down") {
+      const dy = dir === "down" ? 1 : -1, y0 = dir === "down" ? f.bottom + 1 : f.top - 1;
+      for (let x = f.left; x <= f.right; x++) for (let y = y0; b.floor(x, y); y += dy) out.add(key(x, y));
+    } else {
+      const dx = dir === "right" ? 1 : -1, x0 = dir === "right" ? f.right + 1 : f.left - 1;
+      for (let y = f.top; y <= f.bottom; y++) for (let x = x0; b.floor(x, y); x += dx) out.add(key(x, y));
+    }
+  } else if (phase === "leap_slam" || phase === "leap_crouch") {
+    for (let y = f.top - 1; y <= f.bottom + 1; y++) for (let x = f.left - 1; x <= f.right + 1; x++) {
+      const inside = x >= f.left && x <= f.right && y >= f.top && y <= f.bottom;
+      if (!inside && b.floor(x, y)) out.add(key(x, y));
+    }
   }
   return out;
 }
@@ -109,7 +141,8 @@ export function dangerMap(b: Board, exclude: Set<string> = new Set()) {
     if (exclude.has(e.id)) continue;
     const tiles = threatTiles(b, e);
     if (!tiles.size) continue;
-    const imminent = e.v2AttackPhase === "preattack" || (e.v2AttackPhase === "charge" && (e.v2AttackTurns ?? 0) <= 1);
+    const imminent = e.v2AttackPhase === "preattack" || e.v2AttackPhase === "leap_slam" || e.v2AttackPhase === "leap_crouch"
+      || (e.v2AttackPhase === "charge" && (e.v2AttackTurns ?? 0) <= 1);
     if (!imminent) continue;
     const dmg = expectedDamage(e);
     for (const t of tiles) {

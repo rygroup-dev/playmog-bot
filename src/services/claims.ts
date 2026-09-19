@@ -89,14 +89,25 @@ export class ClaimsService {
   }
 
   /** Yield Fields WL raffle: every Golden Corn (or Eve Key) entered = 1 ticket; 175 corn spots / 100 eve-key spots per draw. */
-  async raffleStatus(pool: "goldenCorn" | "eveKeys" = "goldenCorn") {
-    const r = await this.api.get(`/api/raffle/status?pool=${pool}`);
+  async raffleStatus(pool: "goldenCorn" | "eveKeys" | "genesis" = "goldenCorn") {
+    const r = await this.api.get(pool === "genesis" ? "/api/raffle/status" : `/api/raffle/status?pool=${pool}`); // default pool = weekly Genesis Hero raffle
+    r.slotPool ??= 5;
     const expectedWins = r.globalEntries > 0 ? (r.slotPool * (r.userEntries + r.ticketBalance)) / (r.globalEntries + r.ticketBalance) : 0;
     return { ...r, expectedWins, chanceAtLeastOne: 1 - Math.exp(-expectedWins) };
   }
-  async enterRaffle(pool: "goldenCorn" | "eveKeys", ticketCount: number) {
+  async enterRaffle(pool: "goldenCorn" | "eveKeys" | "genesis", ticketCount: number) {
     if (ticketCount <= 0) return null;
-    return this.api.post("/api/raffle/enter", { ticketCount, pool });
+    return this.api.post("/api/raffle/enter", pool === "genesis" ? { ticketCount } : { ticketCount, pool });
+  }
+
+  /** Redeem worldseeds (amber) into World's Eve caches; contents land in the item inventory. */
+  async redeemCaches(premium = false) {
+    const cost = premium ? 2000 : 500;
+    const amber = Number((await this.api.get("/api/items/amber")).balance ?? 0);
+    const count = Math.floor(amber / cost);
+    if (count < 1) return null;
+    const r = await this.api.post("/api/quests/worldseve-redeem", { cacheType: premium ? "worldseve_cache_premium" : "worldseve_cache", count, operationId: randomUUID() });
+    return { count: r.redeemedCount ?? count, amber: r.amberBalance, raw: r };
   }
 
   /** Deposit USDC.e into VALOR (100 VALOR = 1 USD, no fee) and confirm with the backend. */

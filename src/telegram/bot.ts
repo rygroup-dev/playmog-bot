@@ -237,11 +237,12 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
         row("Floor", `<b>${r.floor ?? "?"}</b>`), row("Energy", `${bar(r.energy ?? 0, 100)} <b>${r.energy ?? "?"}</b>`),
         row("Treasure", `💎 <b>${num(r.treasure)}</b>`), row("Aksi terakhir", `<i>${esc(r.last ?? "-")}</i>`));
     } else lines.push("  💤 Tidak ada run berjalan.");
-    lines.push(section("Key"), row("Expedition", `<b>${s.expKeys ?? "?"}</b> (gratis)`), row("Arcade", `<b>${s.keys ?? "?"}</b> ($1/key)`));
+    const eve = s.items?.["key.world"] ?? 0;
+    lines.push(section("Key"), row("Expedition", `<b>${s.expKeys ?? "?"}</b> (gratis)`), row("Arcade", `<b>${s.keys ?? "?"}</b> ($1/key)`), row("Eve Key", `<b>${eve}</b> (World's Eve)`));
     if (recent) lines.push(section("Run terakhir"), `  ${recent.run_type} · floor ${recent.floor} · 💎${num(recent.treasure)} · 🔮${recent.marbles} · 🗝${recent.arcade_keys} · ${ago(recent.ended_at)}`);
     const kb = new InlineKeyboard();
     if (r) kb.text("🛑 Stop run", "a:stopRun");
-    else kb.text("▶️ Main Expedition", "a:playExp").text("🎰 Main Arcade (1 key)", "c:arcade1");
+    else kb.text("▶️ Main Expedition", "a:playExp").text("🎰 Main Arcade (1 key)", "c:arcade1").row().text("🌍 Main World's Eve (1 Eve Key)", "c:world1");
     return { text: lines.join("\n"), kb: nav(kb, "v:run") };
   }
 
@@ -296,6 +297,8 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       corn ? row("Tiket", `${num(corn.ticketBalance)} siap · ${num(corn.userEntries)} sudah masuk · ${num(corn.globalEntries)} total global`) : row("Golden Corn", num(s.items?.["item.golden_corn"])),
       corn ? row("Peluang ≥1 WL", `≈ <b>${(corn.chanceAtLeastOne * 100).toFixed(1)}%</b> (${corn.slotPool} slot) · tutup ${until(corn.entryCloseTime)}`) : "",
       corn ? "     <i>Otomatis dimasukkan 3 jam sebelum tutup</i>" : "",
+      section("🌍 World's Eve"),
+      row("Worldseed", `${num(s.items?.["currency.amber"] ?? (await api.get("/api/items/amber").catch(() => ({ balance: 0 }))).balance)} · 500 = 1 cache, 2000 = premium`),
       section("💸 Uang"),
       row("Jackpot tertunda", jackWei > 0n ? `<b>${jackWei}</b>` : "tidak ada"),
       row("Saldo VALOR", `${num(s.valor)} ≈ ${usd((s.valor ?? 0) / 100)}`),
@@ -304,7 +307,8 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
     const kb = new InlineKeyboard().text("🎁 Klaim harian", "a:daily").text("🗳 Upvote", "a:upvote").row()
       .text("✅ Quest", "a:quests").text("🎟 Undian corn", "c:corn").row()
       .text("💸 Klaim payout+jackpot", "a:money").row()
-      .text("🏦 Tarik semua VALOR → USDC", "c:withdraw");
+      .text("🏦 Tarik semua VALOR → USDC", "c:withdraw").row()
+      .text("🎁 Tukar worldseed → cache", "a:redeem");
     return { text: lines.join("\n"), kb: nav(kb, "v:claims") };
   }
 
@@ -343,6 +347,9 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       row("Arcade berbayar otomatis", on(st.autoArcade)),
       `     · ${st.arcadeKeysPerRun} key/run · cap ${usd(st.arcadeDailyUsdCap, 0)}/hari · EV min ${usd(st.minPoolEvPerKey)}`,
       row("Ruang spesial", st.acceptRooms.length ? st.acceptRooms.join(", ") : "tidak (langsung turun floor)"),
+      row("World's Eve otomatis", `${on(st.autoWorld)} · beli Eve Key maks ${st.worldBuysPerDay}×/hari @≤${num(st.worldKeyMaxPrice)} VALOR`),
+      row("Main Arcade key gratis", `${on(st.playOwnedArcadeKeys)} (key hasil cache, tanpa beli)`),
+      row("Tukar worldseed → cache", on(st.autoRedeemCaches)), row("Jual loot otomatis", `${on(st.autoSellLoot)} (Eve Key & Mint Pass disimpan)`),
       row("Tarik VALOR otomatis", `${on(st.autoWithdraw)} (sisakan ${num(st.withdrawReserveValor)} VALOR untuk pass)`),
       row("Notif tiap run", on(st.notifyEveryRun)),
       footer("Arcade hanya jalan bila EV live ≥ ambang DAN belanja 24 jam < cap.")];
@@ -352,6 +359,9 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       .text("➖", "n:arcadeDailyUsdCap:-1").text(`Cap ${usd(st.arcadeDailyUsdCap, 0)}/hari`, "noop").text("➕", "n:arcadeDailyUsdCap:1").row()
       .text("➖", "n:arcadeKeysPerRun:-1").text(`${st.arcadeKeysPerRun} key/run`, "noop").text("➕", "n:arcadeKeysPerRun:1").row()
       .text("➖", "n:minPoolEvPerKey:-0.05").text(`EV ≥ ${usd(st.minPoolEvPerKey)}`, "noop").text("➕", "n:minPoolEvPerKey:0.05").row()
+      .text(`${check(st.autoWorld)} World's Eve`, "s:autoWorld").text(`${check(st.autoRedeemCaches)} Tukar cache`, "s:autoRedeemCaches").row()
+      .text(`${check(st.autoSellLoot)} Jual loot`, "s:autoSellLoot").text(`${check(st.playOwnedArcadeKeys)} Arcade gratis`, "s:playOwnedArcadeKeys").row()
+      .text("➖", "n:worldBuysPerDay:-1").text(`Eve Key ${st.worldBuysPerDay}×/hari`, "noop").text("➕", "n:worldBuysPerDay:1").row()
       .text(`${check(st.autoWithdraw)} Tarik VALOR auto`, "s:autoWithdraw").text(`${check(st.notifyEveryRun)} Notif run`, "s:notifyEveryRun");
     return { text: lines.join("\n"), kb: nav(kb) };
   }
@@ -471,7 +481,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
   });
   bot.callbackQuery(/^n:(\w+):(-?[\d.]+)$/, async (ctx) => {
     const k = ctx.match[1] as keyof Settings; const d = Number(ctx.match[2]); const st = store.settings();
-    const limits: Record<string, [number, number]> = { arcadeDailyUsdCap: [0, 100], arcadeKeysPerRun: [1, 100], minPoolEvPerKey: [0.5, 2] };
+    const limits: Record<string, [number, number]> = { arcadeDailyUsdCap: [0, 100], arcadeKeysPerRun: [1, 100], minPoolEvPerKey: [0.5, 2], worldBuysPerDay: [0, 10] };
     if (!(k in limits)) return ctx.answerCallbackQuery();
     const [lo, hi] = limits[k]; const v = Math.min(hi, Math.max(lo, Math.round(((st[k] as number) + d) * 100) / 100));
     store.patchSettings({ [k]: v } as Partial<Settings>);
@@ -590,6 +600,37 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
     try { const r = await claims.depositValorUsd(15); store.ledger("mm_capital", 15, "market capital deposit", r.hash); cachedSnap = null;
       await ctx.reply(resultCard("Modal market masuk", `${row("VALOR sekarang", `<b>${num(r.valor)}</b>`)}\n${row("Tx", `<code>${r.hash}</code>`)}`), { parse_mode: "HTML" }); }
     catch (e: any) { await ctx.reply(`❌ ${esc(e.shortMessage ?? e.message)}`, { parse_mode: "HTML" }); }
+  });
+
+  bot.callbackQuery("a:redeem", async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "Menukar worldseed…" });
+    try { const r = await claims.redeemCaches(false); await ctx.reply(r ? resultCard("Cache ditukar", `${row("Jumlah", `${r.count} World's Eve Cache`)}\n${row("Sisa worldseed", num(r.amber))}`) : "ℹ️ Worldseed belum cukup (butuh 500 per cache).", { parse_mode: "HTML" }); }
+    catch (e: any) { await ctx.reply(`❌ ${esc(e.message)}`, { parse_mode: "HTML" }); }
+  });
+  bot.callbackQuery("c:world1", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const eve = (await api.get("/api/items/world-keys")).balance ?? 0;
+    const a = (await market.summary()).get("key.world");
+    if (eve > 0) return edit(ctx, { text: `${header("🌍", "WORLD'S EVE")}\n${row("Biaya", "<b>1 Eve Key</b> (punya " + eve + ")")}\n${row("Hasil", "worldseed → cache, tiket raffle, marbles")}`, kb: new InlineKeyboard().text("✅ Main", "x:world1").text("❌ Batal", "v:run") });
+    await edit(ctx, { text: `${header("🌍", "BELI EVE KEY")}\n${row("Eve Key kamu", "0")}\n${row("Harga market", a?.lowestAsk ? `<b>${num(Number(a.lowestAsk))} VALOR</b> (≈${usd(Number(a.lowestAsk) / 100)})` : "tidak ada penjual")}\n${footer("Dibayar dari saldo VALOR (modal market tidak dipakai jika saldo kurang).")}`,
+      kb: a?.lowestAsk ? new InlineKeyboard().text("✅ Beli 1 & main", "x:buyEve").text("❌ Batal", "v:run") : nav(new InlineKeyboard(), "v:run") });
+  });
+  bot.callbackQuery("x:buyEve", async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "Membeli Eve Key…" });
+    try {
+      const a = (await market.summary()).get("key.world"); const price = Number(a?.lowestAsk ?? 0);
+      const valor = Number((await api.get("/api/shop/valor/balance")).valorBalance);
+      if (!price || valor < price) { await ctx.reply(`ℹ️ Saldo VALOR ${num(valor)} kurang untuk harga ${num(price)}.`); return; }
+      const r = await market.instantBuy("key.world", price, 1);
+      if (!r.filled) { await ctx.reply("ℹ️ Harga berubah, belum terbeli. Coba lagi."); return; }
+      await ctx.reply(resultCard("Eve Key dibeli", row("Harga", `${num(r.price)} VALOR`)), { parse_mode: "HTML" });
+      if (!autopilot.running) void autopilot.createAndPlay("WORLD", 1).catch((e) => notifyAll(`❌ ${esc(e.message)}`));
+    } catch (e: any) { await ctx.reply(`❌ ${esc(e.message)}`, { parse_mode: "HTML" }); }
+  });
+  bot.callbackQuery("x:world1", async (ctx) => {
+    if (autopilot.running) return ctx.answerCallbackQuery({ text: "Sudah ada run berjalan", show_alert: true });
+    await ctx.answerCallbackQuery({ text: "🌍 Memulai World's Eve…" });
+    void autopilot.createAndPlay("WORLD", 1).catch((e) => notifyAll(`❌ ${esc(e.message)}`));
   });
 
   // spending: always confirm

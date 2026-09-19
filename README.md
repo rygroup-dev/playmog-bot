@@ -11,9 +11,10 @@ The bot plays runs by itself, claims every free reward, runs a small market-maki
 ## Features
 
 **Gameplay**
-- Plays Expedition runs and, optionally, Arcade runs. Every action goes over the game's authoritative realtime room, the same channel the official client uses.
+- Plays Expedition runs, World's Eve runs (Eve Keys → worldseeds → caches) and, optionally, Arcade runs. Every action goes over the game's authoritative realtime room, the same channel the official client uses.
 - Reads each enemy's attack telegraph (charge → attack → rest) from server state and decides per turn whether to hit, dodge, or fight through. Spawners, ranged attackers and multi-enemy clusters have their own rules.
 - Chooses goals with a value model measured from real runs: kills, pots and crates, energy orbs and treasure are each scored as value minus the energy cost of walking plus expected damage.
+- Handles the Sir Jackalot bounty arena: 3×4 boss footprint, lane and slam telegraphs, the exit gate, and free movement inside the arena.
 - Picks talents, uses items (shots, sticky bomb, magnet, midas, shock grenade and more), prays at shrines when the price is right, and buys from the armory when it pays off.
 - Safety nets: an anti-loop blacklist, a no-progress watchdog, and it never burns energy standing still.
 
@@ -22,6 +23,9 @@ The bot plays runs by itself, claims every free reward, runs a small market-maki
 - Moves VALOR to USDC.e automatically above a configurable reserve (initiate, then finalize after the 24 h delay).
 - Buying Arcade keys is gated by expected value computed from the bot's *own* measured treasure per key, and capped per day.
 - Expedition Pass purchase and renewal reminders.
+- World's Eve loop: auto-buys up to N Eve Keys a day (capped price, never from market capital), redeems worldseeds into caches, and sells tradable cache loot on the marketplace. Keeps Eve Keys, Adventurer Mint Passes, and gas when you own a staked hero.
+- Enters Golden Corn, Eve Key and Genesis Hero raffle tickets automatically shortly before each draw closes.
+- Self-heals when the game ships a new client version (`CLIENT_OUTDATED`), and pauses the market cleanly while the game has it disabled.
 
 **Marketplace**
 - Market-making pilot: scores every tradable item by net edge after fees, daily volume, buyer count, volatility and price trend, then quotes the best ones (buy at best bid + 1, list at best ask − 1).

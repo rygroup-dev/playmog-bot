@@ -24,7 +24,8 @@ const netOfSale = (price: number) => price - Math.max(1, Math.floor(price * LIST
 interface Pos { qty: number; cost: number; since: number } // cost = VALOR paid per unit (avg)
 interface MMState { pos: Record<string, Pos>; realized: number; fills: number; pausedUntil: Record<string, number>; lastSellPlaced: Record<string, number>;
   seenActivity: string[]; halted: string | null; startedAt: number; selected: string[]; selectedAt: number; scores: AssetScore[];
-  tracked: Record<string, { id: string; side: "BUY" | "SELL"; key: string; price: number; qty: number; name: string }>;
+  tracked: Record<string, { id: string; side: "BUY" | "SELL"; key: string; price: number; qty: number; name: string; loot?: boolean }>;
+  lootListedAt: Record<string, number>; serverPausedUntil?: number;
   outbids: Record<string, number[]> }
 
 export class MarketMaker {
@@ -33,7 +34,7 @@ export class MarketMaker {
 
   cfg(): MMConfig { return { ...DEFAULT_MM, ...this.store.get<Partial<MMConfig>>("mm.config", {}) }; }
   setCfg(p: Partial<MMConfig>) { const c = { ...this.cfg(), ...p }; this.store.set("mm.config", c); return c; }
-  state(): MMState { return { pos: {}, realized: 0, fills: 0, pausedUntil: {}, lastSellPlaced: {}, seenActivity: [], halted: null, startedAt: Date.now(), selected: [], selectedAt: 0, scores: [], tracked: {}, outbids: {}, ...this.store.get<Partial<MMState>>("mm.state", {}) }; }
+  state(): MMState { return { pos: {}, realized: 0, fills: 0, pausedUntil: {}, lastSellPlaced: {}, seenActivity: [], halted: null, startedAt: Date.now(), selected: [], selectedAt: 0, scores: [], tracked: {}, outbids: {}, lootListedAt: {}, ...this.store.get<Partial<MMState>>("mm.state", {}) }; }
 
   /**
    * Smart selection: score every tradable asset from live data — net edge after fees at best bid+1 / ask-1,
@@ -100,10 +101,16 @@ export class MarketMaker {
   private async syncTracked(s: MMState, open: any[]) {
     const openIds = new Set(open.map((o) => o.id));
     // adopt open orders we did not track yet (e.g. placed before a restart) — this wallet only trades via the bot
-    for (const o of open) if (!s.tracked[o.id]) s.tracked[o.id] = { id: o.id, side: o.side, key: o.assetKey, price: Number(o.price), qty: Number(o.quantity) - Number(o.filledQty ?? 0), name: o.asset?.displayName ?? o.assetKey };
+    for (const o of open) if (!s.tracked[o.id]) s.tracked[o.id] = { id: o.id, side: o.side, key: o.assetKey, price: Number(o.price), qty: Number(o.quantity) - Number(o.filledQty ?? 0), name: o.asset?.displayName ?? o.assetKey, loot: o.side === "SELL" && !(s.pos[o.assetKey]?.qty > 0) };
     for (const t of Object.values(s.tracked)) {
       if (openIds.has(t.id)) continue;
       delete s.tracked[t.id];
+      if (t.loot) { // our own run loot: separate books, no effect on market-making P&L
+        const net = t.price * t.qty - Math.floor(t.price * t.qty * SUCCESS);
+        this.store.ledger("loot_sell", net / 100, `${t.qty} ${t.key} @${t.price}`);
+        await this.notify(`💰 <b>Loot terjual</b> ${t.qty} × ${t.name} @ ${t.price} VALOR → bersih <b>${net} VALOR</b> ($${(net / 100).toFixed(2)})`);
+        continue;
+      }
       const p = (s.pos[t.key] ??= { qty: 0, cost: 0, since: Date.now() });
       if (t.side === "BUY") {
         p.cost = (p.cost * p.qty + t.price * t.qty) / (p.qty + t.qty); p.qty += t.qty; p.since = Date.now(); s.fills++;
@@ -154,6 +161,8 @@ export class MarketMaker {
     const s = this.state(); this.cur = s;
     try {
       if (s.halted) return;
+      if ((s.serverPausedUntil ?? 0) > Date.now()) return;
+      if (s.serverPausedUntil) { s.serverPausedUntil = 0; await this.notify("▶️ <b>Market aktif lagi</b> — server membuka kembali marketplace."); }
       await this.syncFills(s, cfg);
       await this.syncTracked(s, await this.myOrders());
       if (s.realized <= -cfg.maxLossValor) {
@@ -184,10 +193,11 @@ export class MarketMaker {
 
       for (const key of managed) {
         const a = book.get(key); if (!a || !a.tradable) continue;
+        if (!active.includes(key) && !(s.pos[key]?.qty > 0) && orders.filter((o) => o.assetKey === key).every((o) => s.tracked[o.id]?.loot)) continue; // loot-only asset
         const buyAllowed = active.includes(key);
         const bid = Number(a.highestBid ?? 0), ask = Number(a.lowestAsk ?? 0);
         const mine = orders.filter((o) => o.assetKey === key);
-        const myBuy = mine.find((o) => o.side === "BUY"); const mySell = mine.find((o) => o.side === "SELL");
+        const myBuy = mine.find((o) => o.side === "BUY"); const mySell = mine.find((o) => o.side === "SELL" && !s.tracked[o.id]?.loot);
         const held = Number(inv[key]?.balance ?? 0);
         const pos = (s.pos[key] ??= { qty: 0, cost: 0, since: Date.now() });
         if (held > pos.qty && pos.qty === 0 && !s.pos[key].cost) { /* pre-existing items not bought by us: ignore */ }
@@ -242,8 +252,54 @@ export class MarketMaker {
       }
       this.lastError = null;
     } catch (e: any) {
-      this.lastError = String(e?.message ?? e); this.log(`mm error: ${this.lastError}`); this.store.event("warn", `mm: ${this.lastError}`);
+      this.lastError = String(e?.message ?? e); this.log(`mm error: ${this.lastError}`);
+      if (e?.code === "FEATURE_DISABLED") {
+        const first = !s.serverPausedUntil || s.serverPausedUntil < Date.now();
+        s.serverPausedUntil = Date.now() + 15 * 60e3;
+        if (first) { this.store.event("warn", "market disabled by the game server — retrying every 15 min"); await this.notify("⏸ <b>Market dimatikan sementara oleh server game</b> (FEATURE_DISABLED). Order lama tetap aktif; bot coba lagi tiap 15 menit."); }
+      } else this.store.event("warn", `mm: ${this.lastError}`);
     } finally { this.save(s); this.busy = false; }
+  }
+
+  /** Instant buy (fill-or-kill) at the lowest ask if it is within maxPrice. Returns units filled. */
+  async instantBuy(assetKey: string, maxPrice: number, quantity = 1) {
+    const a = (await this.summary()).get(assetKey);
+    if (!a?.lowestAsk || Number(a.lowestAsk) > maxPrice) return { filled: 0, price: a?.lowestAsk ? Number(a.lowestAsk) : null };
+    const r = await this.api.post(`${B}/orders`, { side: "BUY", timeInForce: "FOK", assetKey, assetType: a.assetType, assetId: a.assetId ?? null, price: Number(a.lowestAsk), quantity, idempotencyKey: randomUUID() });
+    const filled = (r.fills ?? []).reduce((t: number, f: any) => t + Number(f.quantity), 0);
+    if (filled) this.store.ledger("buy_item", (Number(a.lowestAsk) * filled) / 100, `${filled} ${assetKey} @${a.lowestAsk}`);
+    return { filled, price: Number(a.lowestAsk) };
+  }
+
+  /**
+   * List our own run loot (Eve cache contents etc.) at best ask - 1, never below best bid + 1.
+   * Skips assets the market-maker currently trades, keys we play with, and items kept on purpose.
+   */
+  async sellLoot(keep: string[] = ["key.world", "key.expedition", "pass.adventurer_mint", "item.golden_corn"]) {
+    if ((this.state().serverPausedUntil ?? 0) > Date.now()) return;
+    const s = this.state(); this.cur = s;
+    try {
+      const book = await this.summary(); const open = await this.myOrders();
+      await this.syncTracked(s, open);
+      const inv = (await this.api.get("/api/items/balances")).balances ?? {};
+      const mmKeys = new Set([...(s.selected ?? []), ...Object.entries(s.pos).filter(([, p]) => p.qty > 0).map(([k]) => k)]);
+      for (const [key, v] of Object.entries<any>(inv)) {
+        const a = book.get(key); const held = Number(v.balance ?? 0);
+        if (!a?.tradable || held <= 0 || keep.includes(key) || mmKeys.has(key) || v.soulbound) continue;
+        const listing = open.find((o) => o.assetKey === key && o.side === "SELL");
+        const bid = Number(a.highestBid ?? 0), ask = Number(a.lowestAsk ?? 0);
+        const target = Math.max(ask ? ask - 1 : bid + 1, bid + 1);
+        if (listing) {
+          if (Number(listing.price) <= ask || Date.now() - (s.lootListedAt[key] ?? 0) < 2 * 3600e3) continue; // still best / reprice at most every 2h
+          await this.cancel(listing.id);
+        }
+        if (target <= 1) continue;
+        const r = await this.place("SELL", a, target, held);
+        const id = r.order?.id ?? r.id ?? r.orderId; if (id && s.tracked[id]) s.tracked[id].loot = true;
+        s.lootListedAt[key] = Date.now();
+        await this.notify(`🏷 <b>Loot di-listing</b> ${held} × ${a.displayName} @ ${target} VALOR (≈$${((target * held) / 100).toFixed(2)})`);
+      }
+    } finally { this.save(s); }
   }
 
   /** Snapshot for dashboards. */

@@ -7,12 +7,16 @@ export type Settings = {
   arcadeKeysPerRun: number; arcadeDailyUsdCap: number; minPoolEvPerKey: number;
   expeditionReserveKeys: number; notifyEveryRun: boolean; paused: boolean; acceptRooms: string[];
   autoWithdraw: boolean; withdrawReserveValor: number;
+  autoWorld: boolean; autoRedeemCaches: boolean; autoSellLoot: boolean;
+  worldBuysPerDay: number; worldKeyMaxPrice: number; playOwnedArcadeKeys: boolean;
 };
 export const DEFAULT_SETTINGS: Settings = {
   autoDaily: true, autoUpvote: true, autoExpedition: true, autoArcade: false,
   arcadeKeysPerRun: 1, arcadeDailyUsdCap: 5, minPoolEvPerKey: 1.0,
   expeditionReserveKeys: 0, notifyEveryRun: true, paused: false, acceptRooms: ["shrine", "armory", "jackalot"],
   autoWithdraw: true, withdrawReserveValor: 1000,
+  autoWorld: false, autoRedeemCaches: true, autoSellLoot: true,
+  worldBuysPerDay: 3, worldKeyMaxPrice: 250, playOwnedArcadeKeys: true,
 };
 
 export class Store {
@@ -55,6 +59,9 @@ export class Store {
     if (rows.length < 3) return null;
     const t = rows.reduce((a, r) => a + r.treasure, 0), k = rows.reduce((a, r) => a + Math.max(1, r.keys_used), 0);
     return { perKey: t / k, runs: rows.length };
+  }
+  countSince(ts: number, kind: string, detailLike: string) {
+    return (this.db.prepare("SELECT COUNT(*) n FROM ledger WHERE ts >= ? AND kind = ? AND detail LIKE ?").get(ts, kind, detailLike) as { n: number }).n;
   }
   recentLedger(n = 10) { return this.db.prepare("SELECT * FROM ledger ORDER BY id DESC LIMIT ?").all(n) as any[]; }
   event(level: string, msg: string) { this.db.prepare("INSERT INTO events(ts,level,msg) VALUES(?,?,?)").run(Date.now(), level, msg.slice(0, 2000)); }

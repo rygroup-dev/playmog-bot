@@ -39,6 +39,7 @@ export function killCost(e: any, c: Ctx) {
 
 /** Expected value (EE) of killing enemy e: treasure + orbs + xp→energy + marbles (tiny). */
 export function killValue(e: any, c: Ctx) {
+  if (e.id === "v2_jackalot" || e.spriteType === "v2_jackalot") return 200; // bounty roll + full energy restore
   const xp = e.spriteType === "v2_frogspawn" ? 60 : 15;
   const energy = 0.21 * smallOrb(c.floor) + 0.09 * largeOrb(c.floor) + xp * energyPerXp(c.level);
   const treasure = 0.66 * treasurePerDrop(c.floor) * c.treasureMult;
@@ -56,6 +57,8 @@ export function pickupValue(p: any, c: Ctx) {
   switch (p.type) {
     case "small_energy_orb": case "large_energy_orb": return v || (p.type === "small_energy_orb" ? smallOrb(c.floor) : largeOrb(c.floor));
     case "treasure": return (v || treasurePerDrop(c.floor)) / TPE;
+    case "amber": return ((v || treasurePerDrop(c.floor) / 10) * 10) / TPE;   // worldseeds drop at 1/10 of treasure
+    case "raffle_ticket": return 12;
     case "v2_xp_orb": return (v || 25) * energyPerXp(c.level);
     case "marble": return 1.5;
     case "golden_corn": return 0.8;
