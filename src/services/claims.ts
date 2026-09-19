@@ -5,6 +5,7 @@ import { parseAbi, type Hex, type PrivateKeyAccount } from "viem";
 import { MogApi, sleep } from "../mog/api.js";
 import { AbstractOps, VALOR_VAULT } from "../chain/abstract.js";
 import { ABS, publicClient, walletClient } from "../chain/chains.js";
+import { markReferralUsed, referralCodeFor } from "./referral.js";
 
 const claimVaultAbi = parseAbi([
   "function claimWeekly((uint256 week, uint256 amount, bytes signature)[] claims)",
@@ -125,8 +126,13 @@ export class ClaimsService {
       if (!ok) throw new Error(`deposit ${depositTx} not confirmed yet — do NOT redeposit`);
     }
     const purchaseId = randomUUID();
+    const referralCode = await referralCodeFor(this.api, this.log);
     for (let i = 0; ; i++) {
-      try { const r = await this.api.post("/api/shop/purchase", { purchaseId, itemId }); return { ...r, sku, depositTx, priceUsd: Number(price) / 1e6 }; }
+      try {
+        const r = await this.api.post("/api/shop/purchase", { purchaseId, itemId, ...(referralCode ? { referralCode } : {}) });
+        if (referralCode) markReferralUsed(this.account.address);
+        return { ...r, sku, depositTx, priceUsd: Number(price) / 1e6, referralCode };
+      }
       catch (e: any) { if (!["INSUFFICIENT_VALOR", "LOCK_CONFLICT"].includes(e.code) || i >= 3) throw e; await sleep(2000); }
     }
   }

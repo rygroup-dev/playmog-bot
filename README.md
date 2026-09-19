@@ -148,6 +148,19 @@ Runtime settings live in SQLite and are changed from **⚙️ Settings**. The de
 
 ---
 
+## Referral
+
+When the bot buys an Expedition Pass, it passes a referral code to the game. By default this is the maintainer's code (`TMZA47S8`). The referrer earns a share of the pass price as VALOR, paid by the game at no extra cost to you. It is fully transparent and optional:
+
+- Set `REFERRAL_CODE=` (empty) in `.env` to disable it, or put any other code there.
+- The bot never refers itself, and never replaces a referrer the game already recorded for the account.
+- Only the **first game account on a machine** is referred. A marker file in `~/.config/playmog-bot/` makes every other account on that machine skip the code, so one person running several accounts refers at most one of them.
+- The code is checked with the game's own validation endpoint first. The referrer must hold an active pass for the code to be valid.
+
+Your own code, and how many people used it, is shown in the **🎫 Pass** page.
+
+---
+
 ## Security
 
 - The wallet key never leaves `secrets/wallet.json`. The bot refuses to start if that file is readable by others.

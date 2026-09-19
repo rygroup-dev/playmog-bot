@@ -359,6 +359,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
   async function vPass(): Promise<View> {
     const s = await snap(8_000); const p = s.pass;
     const skus: any[] = await api.get("/api/shop/skus").catch(() => []);
+    const [code, ref] = await Promise.all([api.get("/api/shop/pass-code").catch(() => null), api.get("/api/shop/referral-stats").catch(() => null)]);
     const total = p?.startsAt && p?.expiresAt ? new Date(p.expiresAt).getTime() - new Date(p.startsAt).getTime() : 0;
     const left = p?.expiresAt ? new Date(p.expiresAt).getTime() - Date.now() : 0;
     const lines = [header("🎫", "EXPEDITION PASS"),
@@ -368,6 +369,10 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       "  ◦ Loot Expedition tersimpan (tanpa pass = hangus)",
       "  ◦ Key Expedition harian + upvote 5 (Basic) / 8 (VIP)",
       "  ◦ VIP: +20% marbles Arcade, semua quest, drop Arcade key lebih tinggi",
+      section("Referral"),
+      row("Kode kamu", code?.code ? `<code>${esc(code.code)}</code> (bagikan ke teman saat beli pass)` : "-"),
+      row("Hasil", `${num(ref?.totalReferrals)} referral (${num(ref?.basicCount)} Basic · ${num(ref?.plusCount)} VIP) · ${num(Number(ref?.lifetimeValor ?? 0))} VALOR`),
+      "     <i>Komisi hanya masuk selama pass kamu aktif</i>",
       section("Harga"),
       ...skus.map((k) => `  ◦ ${k.tier} ${k.weeks} minggu: <b>${usd(Number(k.salePrice ?? k.listPrice) / 1e6, 0)}</b>${k.salePrice && k.salePrice !== k.listPrice ? ` <s>${usd(Number(k.listPrice) / 1e6, 0)}</s>` : ""}`),
       footer("Dibayar dari saldo VALOR; kekurangan otomatis di-top-up dari USDC.e. Wajib konfirmasi.")];
