@@ -1,0 +1,36 @@
+{
+  "name": "playmog-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "new-wallet": "tsx scripts/new-wallet.ts",
+    "play": "tsx scripts/play.ts",
+    "monitor": "tsx scripts/monitor.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "colyseus.js": "^0.16.22",
+    "grammy": "^1.46.0",
+    "pino": "^10.3.1",
+    "undici": "^8.10.2",
+    "viem": "^2.56.8",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.6.2",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  },
+  "description": "Owner-only Telegram autopilot for Maze of Gains (playmog.xyz, Abstract): plays runs over the authoritative game room, claims rewards, market-makes on the in-game marketplace, with spend caps and a kill-switch.",
+  "license": "UNLICENSED"
+}

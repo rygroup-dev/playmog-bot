@@ -1,0 +1,379 @@
+[
+ {
+  "id": "apex_hunter",
+  "name": "Apex Hunter",
+  "category": "damage",
+  "rarity": "legendary",
+  "description": "Increased crit chance vs full HP enemies.",
+  "tiers": [
+   "+15% Crit Chance",
+   "+20% Crit Chance",
+   "+30% Crit Chance"
+  ],
+  "notes": null
+ },
+ {
+  "id": "glass_cannon",
+  "name": "Glass Cannon",
+  "category": "damage",
+  "rarity": "legendary",
+  "description": "Significant damage boost, but your {resource} ceiling is capped.",
+  "tiers": [
+   "1.3x Damage · {resource} capped to 70",
+   "1.4x Damage · {resource} capped to 75",
+   "1.5x Damage · {resource} capped to 80"
+  ],
+  "notes": "The cap REPLACES max energy outright (natural v2 max starts at 100 and only grows, so the cap always binds) — taking it mid-run spills any energy above the new ceiling. Energy doubles as the HP bar AND the movement budget in v2, so this trades both survivability and floor range for damage. Enhancing RAISES the ceiling."
+ },
+ {
+  "id": "sharp_blade",
+  "name": "Sharp Blade",
+  "category": "damage",
+  "rarity": "epic",
+  "description": "Increase all damage dealt.",
+  "tiers": [
+   "+20% Damage",
+   "+25% Damage",
+   "+30% Damage"
+  ],
+  "notes": null
+ },
+ {
+  "id": "berserker",
+  "name": "Berserker",
+  "category": "damage",
+  "rarity": "epic",
+  "description": "Deal bonus damage when low on {resource}.",
+  "tiers": [
+   "+25% Damage under 30 {resource}",
+   "+30% Damage under 35 {resource}",
+   "+40% Damage under 40 {resource}"
+  ],
+  "notes": null
+ },
+ {
+  "id": "cleave",
+  "name": "Cleave",
+  "category": "damage",
+  "rarity": "epic",
+  "description": "Adjacent enemies take a portion of damage dealt.",
+  "tiers": [
+   "+20% Cleave Damage",
+   "+30% Cleave Damage",
+   "+40% Cleave Damage"
+  ],
+  "notes": null
+ },
+ {
+  "id": "poison_blade",
+  "name": "Poison Blade",
+  "category": "damage",
+  "rarity": "rare",
+  "description": "Chance to inflict Poison, dealing 20% max HP over time.",
+  "tiers": [
+   "+10% Chance",
+   "+12% Chance",
+   "+15% Chance"
+  ],
+  "notes": "20% of non-boss enemies' max HP per tick for 2 ticks."
+ },
+ {
+  "id": "critical_strike",
+  "name": "Critical Boost",
+  "category": "damage",
+  "rarity": "rare",
+  "description": "Chance to deal a critical hit.",
+  "tiers": [
+   "+5% Chance",
+   "+7% Chance",
+   "+10% Chance"
+  ],
+  "notes": null
+ },
+ {
+  "id": "frenzy",
+  "name": "Frenzy",
+  "category": "damage",
+  "rarity": "rare",
+  "description": "Kills add a damage bonus.",
+  "tiers": [
+   "3rd kill: +7%",
+   "2nd kill: +15%",
+   "Every kill: +25%"
+  ],
+  "notes": null
+ },
+ {
+  "id": "merciless",
+  "name": "Merciless",
+  "category": "damage",
+  "rarity": "rare",
+  "description": "Deal bonus damage to enemies below 50% HP.",
+  "tiers": [
+   "+10% Damage",
+   "+15% Damage",
+   "+25% Damage"
+  ],
+  "notes": null
+ },
+ {
+  "id": "reach",
+  "name": "Reach",
+  "category": "damage",
+  "rarity": "uncommon",
+  "description": "Strikes hit a second target in a straight line.",
+  "tiers": [
+   "+30% Damage",
+   "+40% Damage",
+   "+50% Damage"
+  ],
+  "notes": null
+ },
+ {
+  "id": "heavy_hitter",
+  "name": "Heavy Hitter",
+  "category": "damage",
+  "rarity": "uncommon",
+  "description": "Increase attack at the cost of 1 {resource} per strike.",
+  "tiers": [
+   "+10% Attack",
+   "+15% Attack",
+   "+20% Attack"
+  ],
+  "notes": null
+ },
+ {
+  "id": "apex_guard",
+  "name": "Apex Guard",
+  "category": "defense",
+  "rarity": "legendary",
+  "description": "Take reduced damage from full HP enemies' first hit.",
+  "tiers": [
+   "-10% Damage taken",
+   "-20% Damage taken",
+   "-40% Damage taken"
+  ],
+  "notes": "Ambush cushion (out-of-vision bats, archers, mimic openers) — one reduced hit per enemy, only while the attacker is at full HP. Does not work on trap damage."
+ },
+ {
+  "id": "divine_shield",
+  "name": "Divine Shield",
+  "category": "defense",
+  "rarity": "epic",
+  "description": "Chance to block an incoming hit.",
+  "tiers": [
+   "+15% Chance",
+   "+20% Chance",
+   "+25% Chance"
+  ],
+  "notes": "Does not work on trap damage."
+ },
+ {
+  "id": "armor_plating",
+  "name": "Armor Plating",
+  "category": "defense",
+  "rarity": "epic",
+  "description": "Reduce a portion of all incoming damage.",
+  "tiers": [
+   "-15% Damage taken",
+   "-20% Damage taken",
+   "-25% Damage taken"
+  ],
+  "notes": "Works on trap damage."
+ },
+ {
+  "id": "thorns",
+  "name": "Thorns",
+  "category": "defense",
+  "rarity": "rare",
+  "description": "Reflect a portion of incoming damage back to attackers.",
+  "tiers": [
+   "+10% Reflected",
+   "+15% Reflected",
+   "+20% Reflected + 50% Stun"
+  ],
+  "notes": null
+ },
+ {
+  "id": "greed",
+  "name": "Greed",
+  "category": "economy",
+  "rarity": "legendary",
+  "description": "Earn more treasure, but take more damage.",
+  "tiers": [
+   "1.2x Treasure · +40% Damage taken",
+   "1.3x Treasure · +60% Damage taken",
+   "1.5x Treasure · +80% Damage taken"
+  ],
+  "notes": "Back after the per-floor budget rework removed it, rebuilt to fit it: Greed scales the floor BUDGET at generation time (see GREED_TREASURE_MULT + DungeonGenerator.allocateFloorTreasure), not the value of a drop as it is collected, so the full-clear invariant holds at budget x mult and the drops on the ground already show the bigger numbers. Two consequences worth knowing: the multiplier applies from the NEXT floor on (the current floor was stamped before the pick), and the elective sources OUTSIDE the budget (boss chest, gauntlet, the wager rooms) are deliberately untouched — a collection-time cut would have let Greed inflate a ring-race / portal-gambit payout, which is the player betting their own treasure back at themselves."
+ },
+ {
+  "id": "prospector",
+  "name": "Prospector",
+  "category": "economy",
+  "rarity": "rare",
+  "description": "Increased chance for items to drop from breakables.",
+  "tiers": [
+   "+25% Chance",
+   "+30% Chance",
+   "+35% Chance"
+  ],
+  "notes": "First roll for items, then for other contents?"
+ },
+ {
+  "id": "scavenger",
+  "name": "Scavenger",
+  "category": "economy",
+  "rarity": "uncommon",
+  "description": "Increased chance for breakables to drop loot.",
+  "tiers": [
+   "+10% Chance",
+   "+15% Chance",
+   "+20% Chance"
+  ],
+  "notes": "Less breakables + have to have rarity distinction."
+ },
+ {
+  "id": "swift_steps",
+  "name": "Swift Steps",
+  "category": "mobility",
+  "rarity": "epic",
+  "description": "Gain free moves at the start of each floor.",
+  "tiers": [
+   "+5 Moves",
+   "+8 Moves",
+   "+12 Moves"
+  ],
+  "notes": null
+ },
+ {
+  "id": "survival_instinct",
+  "name": "Survival Instinct",
+  "category": "mobility",
+  "rarity": "rare",
+  "description": "Gain free moves when dropping below 10 {resource}.",
+  "tiers": [
+   "+5 Moves",
+   "+7 Moves",
+   "+10 Moves"
+  ],
+  "notes": "Once per floor. Show used state on Talent."
+ },
+ {
+  "id": "momentum",
+  "name": "Momentum",
+  "category": "mobility",
+  "rarity": "rare",
+  "description": "Kills grant a free move.",
+  "tiers": [
+   "Every 4th kill",
+   "Every 3rd kill",
+   "Every 2nd kill"
+  ],
+  "notes": null
+ },
+ {
+  "id": "last_stand",
+  "name": "Last Stand",
+  "category": "sustain",
+  "rarity": "legendary",
+  "description": "Survive a fatal blow and recover {resource}. Once per floor.",
+  "tiers": [
+   "+10 {resource}",
+   "+15 {resource}",
+   "+25 {resource}"
+  ],
+  "notes": "Once per floor. Show used state on Talent."
+ },
+ {
+  "id": "vampiric",
+  "name": "Vampiric",
+  "category": "sustain",
+  "rarity": "epic",
+  "description": "Kills restore {resource}.",
+  "tiers": [
+   "Every 3rd kill",
+   "Every 2nd kill",
+   "Every kill"
+  ],
+  "notes": null
+ },
+ {
+  "id": "salvage",
+  "name": "Salvage",
+  "category": "sustain",
+  "rarity": "rare",
+  "description": "Smashing breakables restores {resource}.",
+  "tiers": [
+   "+1 {resource}",
+   "+2 {resource}",
+   "+3 {resource}"
+  ],
+  "notes": "Need breakables spawn % for balancing."
+ },
+ {
+  "id": "renewal",
+  "name": "Renewal",
+  "category": "sustain",
+  "rarity": "uncommon",
+  "description": "Gain {resource} at the start of each floor.",
+  "tiers": [
+   "+5 {resource}",
+   "+8 {resource}",
+   "+10 {resource}"
+  ],
+  "notes": null
+ },
+ {
+  "id": "scout",
+  "name": "Scout",
+  "category": "utility",
+  "rarity": "rare",
+  "description": "Increase your vision range.",
+  "tiers": [
+   "+1 Vision",
+   "+2 Vision",
+   "+3 Vision"
+  ],
+  "notes": null
+ },
+ {
+  "id": "corruption",
+  "name": "Corruption",
+  "category": "control",
+  "rarity": "epic",
+  "description": "Chance to corrupt a non-boss enemy on strike.",
+  "tiers": [
+   "+8% Chance",
+   "+11% Chance",
+   "+15% Chance"
+  ],
+  "notes": "Corrupted enemy attacks the nearest other enemy. No effect on bosses."
+ },
+ {
+  "id": "disrupt",
+  "name": "Disrupt",
+  "category": "control",
+  "rarity": "rare",
+  "description": "Chance to stun an enemy for 1 turn on strike.",
+  "tiers": [
+   "+5% Chance",
+   "+7% Chance",
+   "+10% Chance"
+  ],
+  "notes": "Stunned enemies skip their next turn."
+ },
+ {
+  "id": "menace",
+  "name": "Menace",
+  "category": "control",
+  "rarity": "rare",
+  "description": "Kills have a chance to frighten adjacent enemies.",
+  "tiers": [
+   "+10% Chance",
+   "+15% Chance",
+   "+20% Chance"
+  ],
+  "notes": "Frightened enemies flee in fear for 2 turns."
+ }
+]

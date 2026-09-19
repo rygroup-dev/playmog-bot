@@ -1,0 +1,24 @@
+# Example systemd unit. Adjust User, WorkingDirectory and the node path, then:
+#   sudo cp deploy/playmog-bot.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#   sudo systemctl enable --now playmog-bot
+[Unit]
+Description=Maze of Gains Telegram autopilot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=playmog
+WorkingDirectory=/opt/playmog-bot
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/playmog-bot/data
+
+[Install]
+WantedBy=multi-user.target
