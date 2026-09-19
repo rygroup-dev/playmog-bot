@@ -26,7 +26,7 @@ interface MMState { pos: Record<string, Pos>; realized: number; fills: number; p
   seenActivity: string[]; halted: string | null; startedAt: number; selected: string[]; selectedAt: number; scores: AssetScore[];
   tracked: Record<string, { id: string; side: "BUY" | "SELL"; key: string; price: number; qty: number; name: string; loot?: boolean }>;
   lootListedAt: Record<string, number>; serverPausedUntil?: number;
-  outbids: Record<string, number[]> }
+  outbids: Record<string, number[]>; wars?: Record<string, number[]> }
 
 export class MarketMaker {
   busy = false; lastRunAt = 0; lastError: string | null = null;
@@ -208,10 +208,11 @@ export class MarketMaker {
       }
       if (cfg.autoSelect && Date.now() - s.selectedAt > 30 * 60e3) {
         s.scores = await this.scoreAssets(cfg); s.selectedAt = Date.now();
-        const pick = s.scores.filter((x) => x.score > 0).slice(0, cfg.maxAssets).map((x) => x.key);
+        const parked = (k: string) => (s.pausedUntil[k] ?? 0) - Date.now() > 60 * 60e3; // stop-loss / bid-war parking
+        const pick = s.scores.filter((x) => x.score > 0 && !parked(x.key)).slice(0, cfg.maxAssets).map((x) => x.key);
         if (pick.join() !== s.selected.join()) {
           s.selected = pick;
-          await this.notify(`🧠 <b>Market: pilihan item diperbarui</b>\n${s.scores.filter((x) => x.score > 0).slice(0, cfg.maxAssets).map((x) => `◦ ${x.name}: edge ${Math.round(x.edge)} VALOR (${(x.edgePct * 100).toFixed(0)}%) · ${Math.round(x.unitsPerDay)} unit/hari`).join("\n") || "◦ tidak ada item yang layak saat ini — menunggu"}`);
+          await this.notify(`🧠 <b>Market: pilihan item diperbarui</b>\n${s.scores.filter((x) => pick.includes(x.key)).map((x) => `◦ ${x.name}: edge ${Math.round(x.edge)} VALOR (${(x.edgePct * 100).toFixed(0)}%) · ${Math.round(x.unitsPerDay)} unit/hari`).join("\n") || "◦ tidak ada item yang layak saat ini — menunggu"}`);
         }
       }
       const active = cfg.autoSelect ? s.selected : cfg.assets;
@@ -273,7 +274,17 @@ export class MarketMaker {
             // bid war with another bot (outbid +1 every tick): after 3 outbids in 10 min, step back for 20 min
             const hist = (s.outbids[key] ?? []).filter((t) => Date.now() - t < 10 * 60e3); hist.push(Date.now()); s.outbids[key] = hist;
             await this.cancel(myBuy.id); drop(); valor += Number(myBuy.price);
-            if (hist.length >= 3) { s.pausedUntil[key] = Date.now() + 20 * 60e3; s.outbids[key] = []; this.store.event("info", `mm ${key}: bid war detected, backing off 20 min`); continue; }
+            if (hist.length >= 3) {
+              // repeated wars on the same item never fill (the other bot always tops us by +1 and we only push the price up):
+              // the 3rd war within 3 h parks the item for 3 h and hands its capital to the next-best item
+              s.wars ??= {}; const wars = (s.wars[key] ?? []).filter((t) => Date.now() - t < 3 * 3600e3); wars.push(Date.now()); s.wars[key] = wars;
+              const long = wars.length >= 3;
+              s.pausedUntil[key] = Date.now() + (long ? 3 * 3600e3 : 20 * 60e3); s.outbids[key] = [];
+              if (long) { s.wars[key] = []; s.selectedAt = 0; }
+              this.store.event("info", `mm ${key}: bid war detected, backing off ${long ? "3 h (rotating to the next item)" : "20 min"}`);
+              if (long) await this.notify(`⚔️ <b>Market: perang harga ${myBuy.asset?.displayName ?? key}</b> — bot lain selalu +1 di atas kita. Item diistirahatkan 3 jam, modalnya dipakai ke item lain.`);
+              continue;
+            }
             this.store.event("info", `mm reprice ${key}: outbid at ${myBuy.price}, bid now ${bid}`);
           }
           else continue;
