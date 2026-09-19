@@ -38,6 +38,7 @@ export class Autopilot {
         await this.safe("weekly-claim", () => this.autoClaims());
         await this.safe("pass-reminder", () => this.passReminder());
         await this.safe("daily-report", () => this.dailyReport());
+        await this.safe("corn-raffle", () => this.autoRaffle());
       }
       // resume any run left open (crash/restart) before starting new ones
       for (const t of ["EXPEDITION", "NORMAL"] as RunType[]) {
@@ -83,6 +84,24 @@ export class Autopilot {
     }
     const f = await this.claims.finalizeWithdrawalIfReady();
     if (f) { this.store.ledger("withdraw", 0, "VALOR withdrawal finalized", f.hash); await this.notify(`🏦 <b>Penarikan VALOR selesai</b> — USDC.e masuk wallet\n<code>${f.hash}</code>`); }
+  }
+
+  /**
+   * Golden Corn has one sensible use for us: the Yield Fields WL raffle (the Silo leaderboard needs ~44k corn).
+   * Tickets are entered in the last 3h before entry closes so every corn farmed until then counts.
+   */
+  async autoRaffle() {
+    if (!this.claims) return;
+    for (const pool of ["goldenCorn", "eveKeys"] as const) {
+      const r = await this.claims.raffleStatus(pool);
+      const left = new Date(r.entryCloseTime).getTime() - Date.now();
+      if (r.ticketBalance > 0 && left > 0 && left < 3 * 3600e3) {
+        await this.claims.enterRaffle(pool, r.ticketBalance);
+        const after = await this.claims.raffleStatus(pool);
+        this.store.event("info", `raffle ${pool}: entered ${r.ticketBalance}`);
+        await this.notify(`🎟 <b>Undian ${pool === "goldenCorn" ? "Golden Corn" : "Eve Key"} (WL Yield Fields)</b>\nMasuk ${r.ticketBalance} tiket · total tiket kita ${after.userEntries} · peluang ≥1 WL ≈ ${(after.chanceAtLeastOne * 100).toFixed(1)}%\nDiundi ${new Date(r.drawTime).toISOString().slice(0, 16).replace("T", " ")} UTC`);
+      }
+    }
   }
 
   /** One summary per UTC day (sent on the first slow tick after 00:00 UTC). */

@@ -87,6 +87,17 @@ export class ClaimsService {
     return { hash };
   }
 
+  /** Yield Fields WL raffle: every Golden Corn (or Eve Key) entered = 1 ticket; 175 corn spots / 100 eve-key spots per draw. */
+  async raffleStatus(pool: "goldenCorn" | "eveKeys" = "goldenCorn") {
+    const r = await this.api.get(`/api/raffle/status?pool=${pool}`);
+    const expectedWins = r.globalEntries > 0 ? (r.slotPool * (r.userEntries + r.ticketBalance)) / (r.globalEntries + r.ticketBalance) : 0;
+    return { ...r, expectedWins, chanceAtLeastOne: 1 - Math.exp(-expectedWins) };
+  }
+  async enterRaffle(pool: "goldenCorn" | "eveKeys", ticketCount: number) {
+    if (ticketCount <= 0) return null;
+    return this.api.post("/api/raffle/enter", { ticketCount, pool });
+  }
+
   /** Deposit USDC.e into VALOR (100 VALOR = 1 USD, no fee) and confirm with the backend. */
   async depositValorUsd(usd: number) {
     const raw = BigInt(Math.round(usd * 1e6));

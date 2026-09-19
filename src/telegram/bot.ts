@@ -283,7 +283,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
 
   async function vClaims(): Promise<View> {
     const s = await snap(8_000);
-    const [jackWei, pendW] = await Promise.all([claims.pendingJackpotWei().catch(() => 0n), api.get("/api/shop/valor/pending").catch(() => null)]);
+    const [jackWei, pendW, corn] = await Promise.all([claims.pendingJackpotWei().catch(() => 0n), api.get("/api/shop/valor/pending").catch(() => null), claims.raffleStatus("goldenCorn").catch(() => null)]);
     const past = (s.claims?.pastWeeks ?? []).filter((w: any) => Number(w.amount) > 0 && !w.claimed);
     const quests = [...(s.quests?.daily?.quests ?? []), ...(s.quests?.weekly?.quests ?? [])];
     const lines = [header("🎁", "KLAIM & REWARD"),
@@ -292,14 +292,17 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       row("Quest aktif", `${quests.length}`),
       ...quests.slice(0, 6).map((q: any) => `     · ${esc(q.title ?? q.questKey ?? q.key)} ${q.progress ?? ""}${q.target ? `/${q.target}` : ""}`),
       row("Payout mingguan tertunda", past.length ? past.map((w: any) => `w${w.weekNumber}: ${num(Number(w.amount))}`).join(", ") : "tidak ada"),
-      row("Golden Corn", `${num(s.items?.["item.golden_corn"])} (setor ke Silo of Gains)`),
+      section("🌽 Golden Corn → undian WL Yield Fields"),
+      corn ? row("Tiket", `${num(corn.ticketBalance)} siap · ${num(corn.userEntries)} sudah masuk · ${num(corn.globalEntries)} total global`) : row("Golden Corn", num(s.items?.["item.golden_corn"])),
+      corn ? row("Peluang ≥1 WL", `≈ <b>${(corn.chanceAtLeastOne * 100).toFixed(1)}%</b> (${corn.slotPool} slot) · tutup ${until(corn.entryCloseTime)}`) : "",
+      corn ? "     <i>Otomatis dimasukkan 3 jam sebelum tutup</i>" : "",
       section("💸 Uang"),
       row("Jackpot tertunda", jackWei > 0n ? `<b>${jackWei}</b>` : "tidak ada"),
       row("Saldo VALOR", `${num(s.valor)} ≈ ${usd((s.valor ?? 0) / 100)}`),
       row("Penarikan berjalan", pendW?.pending ? `${esc(pendW.pending.status)} · ${usd(Number(pendW.pending.netUsdc ?? 0) / 1e6)} · klaim ${until(pendW.pending.claimableAt)}` : "tidak ada"),
       footer("Semua klaim berjalan otomatis. Tarik VALOR: min 500, fee 5%, cair 24 jam.")];
     const kb = new InlineKeyboard().text("🎁 Klaim harian", "a:daily").text("🗳 Upvote", "a:upvote").row()
-      .text("✅ Quest", "a:quests").text("🌽 Setor corn", "c:corn").row()
+      .text("✅ Quest", "a:quests").text("🎟 Undian corn", "c:corn").row()
       .text("💸 Klaim payout+jackpot", "a:money").row()
       .text("🏦 Tarik semua VALOR → USDC", "c:withdraw");
     return { text: lines.join("\n"), kb: nav(kb, "v:claims") };
@@ -617,16 +620,19 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
     void autopilot.createAndPlay("NORMAL", 1).catch((e) => notifyAll(`❌ ${esc(e.message)}`));
   });
   bot.callbackQuery("c:corn", async (ctx) => {
-    const n = (await snap(8_000)).items?.["item.golden_corn"] ?? 0;
     await ctx.answerCallbackQuery();
-    if (!n) return edit(ctx, { text: "ℹ️ Tidak ada Golden Corn.", kb: nav(new InlineKeyboard()) });
-    await edit(ctx, { text: `${header("🌽", "SETOR GOLDEN CORN")}\n${row("Jumlah", `<b>${n}</b>`)}\n${footer("Disetor ke Silo of Gains (tidak bisa ditarik kembali).")}`, kb: new InlineKeyboard().text("✅ Setor", "x:corn").text("❌ Batal", "v:claims") });
+    const r = await claims.raffleStatus("goldenCorn");
+    if (!r.ticketBalance) return edit(ctx, { text: "ℹ️ Tidak ada Golden Corn yang bisa dimasukkan.", kb: nav(new InlineKeyboard(), "v:claims") });
+    await edit(ctx, { text: `${header("🎟", "UNDIAN GOLDEN CORN")}\n${row("Tiket", `<b>${num(r.ticketBalance)}</b> corn = ${num(r.ticketBalance)} tiket`)}\n${row("Hadiah", `${r.slotPool} slot WL Yield Fields (bisa menang >1)`)}\n${row("Diundi", new Date(r.drawTime).toISOString().slice(0, 16).replace("T", " ") + " UTC")}\n${footer("Corn yang dimasukkan hangus untuk undian ini. Bot otomatis memasukkan 3 jam sebelum tutup; masukkan sekarang hanya jika perlu.")}`,
+      kb: new InlineKeyboard().text("✅ Masukkan sekarang", "x:corn").text("❌ Batal", "v:claims") });
   });
   bot.callbackQuery("x:corn", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    const n = (await snap(8_000)).items?.["item.golden_corn"] ?? 0;
-    try { const r = await api.post("/api/yf/silo/turn-in", { currency: "goldenCorn", amount: n }); cachedSnap = null; await ctx.reply(resultCard("Corn disetor", `  ${n} corn · rank ${esc(r?.rank ?? "-")} · kontribusi ${esc(r?.contributed ?? "-")}`), { parse_mode: "HTML" }); }
-    catch (e: any) { await ctx.reply(`❌ ${esc(e.message)}`, { parse_mode: "HTML" }); }
+    await ctx.answerCallbackQuery({ text: "Memasukkan tiket…" });
+    try {
+      const r = await claims.raffleStatus("goldenCorn"); await claims.enterRaffle("goldenCorn", r.ticketBalance);
+      const a = await claims.raffleStatus("goldenCorn"); cachedSnap = null;
+      await ctx.reply(resultCard("Tiket undian masuk", `${row("Masuk", `${num(r.ticketBalance)} tiket`)}\n${row("Total tiket kita", num(a.userEntries))}\n${row("Peluang ≥1 WL", `≈ ${(a.chanceAtLeastOne * 100).toFixed(1)}%`)}`), { parse_mode: "HTML" });
+    } catch (e: any) { await ctx.reply(`❌ ${esc(e.message)}`, { parse_mode: "HTML" }); }
   });
 
   // Relay quotes -> confirm -> execute
