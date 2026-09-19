@@ -3,6 +3,8 @@ import type { PrivateKeyAccount } from "viem/accounts";
 
 export const MOG_BASE = "https://playmog.xyz";
 export let APP_VERSION = process.env.MOG_APP_VERSION ?? "24";
+/** Follow the live client version (GameWatch / CLIENT_OUTDATED self-heal). */
+export function setAppVersion(v: string) { APP_VERSION = v; }
 
 /** Read the live client's APP_VERSION from the site bundle (used when the server says CLIENT_OUTDATED). */
 export async function detectAppVersion(): Promise<string | null> {

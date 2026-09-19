@@ -12,6 +12,7 @@ import { snapshot, type Snapshot } from "../services/account.js";
 import { Autopilot } from "../services/autopilot.js";
 import { ClaimsService } from "../services/claims.js";
 import { MarketMaker } from "../services/market.js";
+import type { FundWatch, GameWatch } from "../services/watch.js";
 import { esc, num, usd, header, section, row, on, check, bar, ago, until, utcNow, shortAddr, pre, footer } from "./ui.js";
 
 type View = { text: string; kb: InlineKeyboard };
@@ -56,8 +57,8 @@ export const BOT_DESCRIPTION = [
   "🛡 Hanya pemilik; setiap belanja wajib konfirmasi; kill-switch 1 tombol",
 ].join("\n");
 
-export function createBot(opts: { token: string; store: Store; api: MogApi; abs: AbstractOps; account: PrivateKeyAccount; autopilot: Autopilot; claims: ClaimsService; market: MarketMaker; envOwners: number[]; log: (m: string) => void }) {
-  const { store, api, abs, account, autopilot, claims, market, log } = opts;
+export function createBot(opts: { token: string; store: Store; api: MogApi; abs: AbstractOps; account: PrivateKeyAccount; autopilot: Autopilot; claims: ClaimsService; market: MarketMaker; gameWatch?: GameWatch; fundWatch?: FundWatch; envOwners: number[]; log: (m: string) => void }) {
+  const { store, api, abs, account, autopilot, claims, market, gameWatch, fundWatch, log } = opts;
   const bot = new Bot(opts.token);
   let claimCode: string | null = null;
   const pendingQuotes = new Map<string, { quote: Quote; label: string; expires: number }>();
@@ -164,6 +165,11 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
   }
 
   // ---------------- views ----------------
+  function gameLine() {
+    if (!gameWatch) return "";
+    const g = gameWatch.state();
+    return `🛠 Game v${g.appVersion} · deploy <code>${(g.rev ?? "?").slice(0, 7)}</code>${g.paused ? " · ⏸ server pause" : ""} · update terakhir ${g.changedAt ? ago(g.changedAt) : "-"} · dicek ${g.checkedAt ? ago(g.checkedAt) : "-"}`;
+  }
   async function vMenu(): Promise<View> {
     const st = store.settings(); const r = autopilot.running; const s = await snap(60_000).catch(() => null);
     const lines = [
@@ -173,6 +179,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       s ? `💵 ${s.wallet?.usdc ?? "?"} USDC.e · ⛽ ${s.wallet?.eth ?? "?"} ETH · 🗝 ${s.keys ?? 0} arcade / ${s.expKeys ?? 0} expedition` : "",
       section("Run"),
       r ? `  🎮 ${r.runType} · floor <b>${r.floor ?? "?"}</b> · 💎 ${num(r.treasure)}\n  ⚡ ${bar(r.energy ?? 0, 100)} ${r.energy ?? "?"}` : "  💤 Tidak ada run berjalan",
+      gameLine(),
       autopilot.lastError ? `\n⚠️ <i>${esc(autopilot.lastError).slice(0, 180)}</i>` : "",
     ];
     const kb = new InlineKeyboard()
@@ -352,7 +359,10 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       row("Tukar worldseed → cache", on(st.autoRedeemCaches)), row("Jual loot otomatis", `${on(st.autoSellLoot)} (Eve Key & Mint Pass disimpan)`),
       row("Tarik VALOR otomatis", `${on(st.autoWithdraw)} (sisakan ${num(st.withdrawReserveValor)} VALOR untuk pass)`),
       row("Notif tiap run", on(st.notifyEveryRun)),
-      footer("Arcade hanya jalan bila EV live ≥ ambang DAN belanja 24 jam < cap.")];
+      section("Update game"),
+      gameLine() ? "  " + gameLine() : "  -",
+      ...(gameWatch?.state().history ?? []).slice(0, 3).map((h) => `  ◦ ${ago(h.at)} · <code>${(h.rev ?? "?").slice(0, 7)}</code> · ${h.changes.length ? esc(h.changes[0].replace(/<[^>]+>/g, "").split("\n")[0]).slice(0, 80) : "tanpa perubahan aturan"}`),
+      footer("Arcade hanya jalan bila EV live ≥ ambang DAN belanja 24 jam < cap. Update game dicek tiap 5 menit.")];
     const kb = new InlineKeyboard()
       .text(`${check(st.autoDaily)} Harian`, "s:autoDaily").text(`${check(st.autoUpvote)} Upvote`, "s:autoUpvote").row()
       .text(`${check(st.autoExpedition)} Expedition`, "s:autoExpedition").text(`${check(st.autoArcade)} Arcade`, "s:autoArcade").row()
@@ -362,7 +372,8 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       .text(`${check(st.autoWorld)} World's Eve`, "s:autoWorld").text(`${check(st.autoRedeemCaches)} Tukar cache`, "s:autoRedeemCaches").row()
       .text(`${check(st.autoSellLoot)} Jual loot`, "s:autoSellLoot").text(`${check(st.playOwnedArcadeKeys)} Arcade gratis`, "s:playOwnedArcadeKeys").row()
       .text("➖", "n:worldBuysPerDay:-1").text(`Eve Key ${st.worldBuysPerDay}×/hari`, "noop").text("➕", "n:worldBuysPerDay:1").row()
-      .text(`${check(st.autoWithdraw)} Tarik VALOR auto`, "s:autoWithdraw").text(`${check(st.notifyEveryRun)} Notif run`, "s:notifyEveryRun");
+      .text(`${check(st.autoWithdraw)} Tarik VALOR auto`, "s:autoWithdraw").text(`${check(st.notifyEveryRun)} Notif run`, "s:notifyEveryRun").row()
+      .text("🔄 Cek update game sekarang", "a:gameCheck");
     return { text: lines.join("\n"), kb: nav(kb) };
   }
 
@@ -408,6 +419,8 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
         `     pasar ${num(l.bid)} / ${num(l.ask)} · stok ${l.qty}${l.qty ? ` @${num(l.cost)}` : ""} · order: ${l.orders.length ? esc(l.orders.map((o: string) => o.replace("BUY@", "beli ").replace("SELL@", "jual ")).join(", ")) : "menunggu"}`]) : ["  -"]),
       section(`Scan item (${st.selectedAt ? ago(st.selectedAt) : "belum"})`),
       pre(["ITEM            EDGE   %  UNIT/HARI  STATUS", ...(st.scores ?? []).slice(0, 9).map((x) => `${shortName(x.name).padEnd(15)}${String(Math.round(x.edge)).padStart(5)} ${String(Math.round(x.edgePct * 100)).padStart(3)} ${String(Math.round(x.unitsPerDay)).padStart(9)}  ${st.selected.includes(x.key) ? "✓ DIPILIH" : x.reason}`)]),
+      ...(() => { const p = fundWatch?.plan(); if (!p) return [];
+        return [row("Top-up terjadwal", p.doneAt ? `✅ selesai ${ago(p.doneAt)} (+${p.marketUsd} USD)` : `⏳ menunggu USDC.e baru ≥ $${p.marketUsd} → modal ${num(p.targetCapitalValor)} VALOR`)]; })(),
       row("Aturan", `max ${c.maxAssets} item · 1 unit/item · stop-loss ${c.stopLossPct * 100}% · batas rugi ${usd(c.maxLossValor / 100, 0)}`),
       footer("Notifikasi: order beli, terbeli, listing jual, terjual + profit.")];
     const kb = new InlineKeyboard()
@@ -571,6 +584,11 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
     if (c.enabled) void market.tick();
     await edit(ctx, await vMarket());
   });
+  bot.callbackQuery("a:gameCheck", async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "Mengecek versi game…" });
+    try { await gameWatch?.check(true); } catch (e: any) { await ctx.reply(`❌ ${esc(e.message)}`, { parse_mode: "HTML" }); }
+    await edit(ctx, vSettings());
+  });
   bot.callbackQuery("a:mmScan", async (ctx) => {
     await ctx.answerCallbackQuery({ text: "Scan semua item…" });
     const st = market.state(); st.selectedAt = 0; store.set("mm.state", st);
@@ -598,7 +616,9 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
     if (!exp || exp < Date.now()) return ctx.answerCallbackQuery({ text: "Kedaluwarsa, ulangi.", show_alert: true });
     await ctx.answerCallbackQuery({ text: "Deposit…" });
     try { const r = await claims.depositValorUsd(15); store.ledger("mm_capital", 15, "market capital deposit", r.hash); cachedSnap = null;
-      await ctx.reply(resultCard("Modal market masuk", `${row("VALOR sekarang", `<b>${num(r.valor)}</b>`)}\n${row("Tx", `<code>${r.hash}</code>`)}`), { parse_mode: "HTML" }); }
+      const mc = market.cfg(); const cap = mc.capitalValor + 1500; market.setCfg({ capitalValor: cap, maxAssets: cap >= 3000 ? Math.max(3, mc.maxAssets) : mc.maxAssets });
+      const plan = fundWatch?.plan(); if (plan && !plan.doneAt) store.set("fund.plan", { ...plan, doneAt: Date.now(), tx: r.hash });
+      await ctx.reply(resultCard("Modal market masuk", `${row("VALOR sekarang", `<b>${num(r.valor)}</b>`)}\n${row("Modal market", `<b>${num(cap)} VALOR</b>`)}\n${row("Tx", `<code>${r.hash}</code>`)}`), { parse_mode: "HTML" }); }
     catch (e: any) { await ctx.reply(`❌ ${esc(e.shortMessage ?? e.message)}`, { parse_mode: "HTML" }); }
   });
 

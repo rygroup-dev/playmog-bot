@@ -26,6 +26,8 @@ The bot plays runs by itself, claims every free reward, runs a small market-maki
 - World's Eve loop: auto-buys up to N Eve Keys a day (capped price, never from market capital), redeems worldseeds into caches, and sells tradable cache loot on the marketplace. Keeps Eve Keys, Adventurer Mint Passes, and gas when you own a staked hero.
 - Enters Golden Corn, Eve Key and Genesis Hero raffle tickets automatically shortly before each draw closes.
 - Self-heals when the game ships a new client version (`CLIENT_OUTDATED`), and pauses the market cleanly while the game has it disabled.
+- Game update watcher: checks the game's deploy every 5 minutes. On a new deploy it re-reads the live client, follows a new client version, diffs the enemy rules against what the AI uses (and switches to the new numbers), then sends a Telegram alert that lists exactly what changed. It also alerts when the game server is paused for maintenance.
+- Incoming funds alert, plus an optional one-shot market top-up: `npx tsx scripts/fund-plan.ts 15 3000` deposits the next 15 USDC.e that arrives into VALOR and raises market capital to 3,000 VALOR.
 
 **Marketplace**
 - Market-making pilot: scores every tradable item by net edge after fees, daily volume, buyer count, volatility and price trend, then quotes the best ones (buy at best bid + 1, list at best ask − 1).
@@ -60,6 +62,7 @@ SQLite store ──────┘                           ├─ Game room (C
 | `src/game/runner.ts` | Plays a run to completion and writes a per-turn JSONL log to `data/runs/` |
 | `src/services/autopilot.ts` | Scheduler: claims, runs, Arcade gate, withdrawals, reminders, daily report |
 | `src/services/market.ts` | Market-making with order tracking, stop-loss and loss limit |
+| `src/services/watch.ts` | Game update watcher (deploy, client version, enemy rules) and funding watcher |
 | `src/services/claims.ts` | Weekly and jackpot claims, VALOR deposit and withdraw, pass purchase |
 | `src/chain/*` | Abstract, Arbitrum and Robinhood clients, contract calls, Relay bridge and swap |
 | `src/telegram/*` | Bot UI, confirmations and live refresh |

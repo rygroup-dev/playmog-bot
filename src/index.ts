@@ -8,6 +8,7 @@ import { Autopilot } from "./services/autopilot.js";
 import { ClaimsService } from "./services/claims.js";
 import { MarketMaker } from "./services/market.js";
 import { createBot } from "./telegram/bot.js";
+import { FundWatch, GameWatch, startWatchers } from "./services/watch.js";
 
 const logger = pino({ level: env.LOG_LEVEL, redact: ["privateKey", "token", "*.privateKey"] });
 const log = (m: string) => logger.info(m);
@@ -21,18 +22,21 @@ let notify: (t: string, level?: string) => Promise<void> = async () => {};
 const claims = new ClaimsService(api, abs, account, log);
 const market = new MarketMaker(api, store, (t) => notify(t), log);
 const autopilot = new Autopilot(api, abs, store, (t, l) => notify(t, l), log, claims, market);
-const tg = createBot({ token: env.TELEGRAM_BOT_TOKEN, store, api, abs, account, autopilot, claims, market, envOwners: ownerIdsFromEnv, log });
+const gameWatch = new GameWatch(store, (t, l) => notify(t, l), log, market);
+const fundWatch = new FundWatch(store, abs, claims, market, (t, l) => notify(t, l), log);
+const tg = createBot({ token: env.TELEGRAM_BOT_TOKEN, store, api, abs, account, autopilot, claims, market, gameWatch, fundWatch, envOwners: ownerIdsFromEnv, log });
 notify = async (t) => { await tg.notifyAll(t); };
 
 tg.ensureClaimCode();
 await tg.setupProfile().catch((e) => log(`setupProfile: ${e.message}`));
 void tg.bot.start({ drop_pending_updates: true, onStart: (i) => log(`telegram @${i.username} online`) });
 autopilot.start(60_000);
+const stopWatchers = startWatchers({ game: gameWatch, fund: fundWatch }, log);
 log(`playmog-bot started, wallet ${account.address}`);
 
 const shutdown = async (sig: string) => {
   log(`${sig}: stopping (current run left open; it resumes on next start)`);
-  autopilot.stop();
+  autopilot.stop(); stopWatchers();
   await tg.bot.stop().catch(() => {});
   setTimeout(() => process.exit(0), 3000).unref();
 };
