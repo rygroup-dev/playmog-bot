@@ -137,7 +137,9 @@ export class Autopilot {
     const price = Number(a?.lowestAsk ?? 0);
     if (!price || price > st.worldKeyMaxPrice) return 0;
     // free VALOR = balance minus what market-making still needs to rebuy its current positions
-    const mmNeeds = mm.enabled ? Math.max(0, mmCommitted - Object.values(mmState.pos).reduce((t, p) => t + p.cost * p.qty, 0)) : 0;
+    // VALOR locked in our open BUY orders is already out of the balance and already part of the market capital
+    const locked = mm.enabled ? (await this.market.myOrders()).filter((o) => o.side === "BUY").reduce((t, o) => t + Number(o.price) * (Number(o.quantity) - Number(o.filledQty ?? 0)), 0) : 0;
+    const mmNeeds = mm.enabled ? Math.max(0, mmCommitted - locked - Object.values(mmState.pos).reduce((t, p) => t + p.cost * p.qty, 0)) : 0;
     if (valor - price < Math.min(mmNeeds, valor)) {
       // market capital is untouchable: pay Eve Keys from wallet USDC.e instead (1 USDC.e = 100 VALOR, deposit has no fee)
       const left = st.worldBuysPerDay - this.store.countSince(dayStart, "buy_item", "% key.world %");

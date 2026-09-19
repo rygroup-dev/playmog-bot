@@ -8,8 +8,15 @@ import talentTable from "./talents.json" with { type: "json" };
 export interface PolicyMemory {
   blacklist: Map<string, number>;   // enemyId -> turn until which it is ignored
   dodges: Map<string, number>;      // enemyId -> dodges since we last damaged it
+  traps: Map<number, Set<string>>;  // floor -> tiles where a hidden trap hit us (spikes re-fire every 2 turns while we stand there)
 }
-export const newMemory = (): PolicyMemory => ({ blacklist: new Map(), dodges: new Map() });
+export const newMemory = (): PolicyMemory => ({ blacklist: new Map(), dodges: new Map(), traps: new Map() });
+/** Known trap tiles on the current floor: the ones that already hit us + any the server reveals (trap sight). */
+export function trapTiles(g: any, mem: PolicyMemory): Set<string> {
+  const out = new Set(mem.traps.get(g.currentFloor ?? 0) ?? []);
+  for (const t of g.traps ?? []) if (typeof t?.x === "number" && typeof t?.y === "number") out.add(key(t.x, t.y));
+  return out;
+}
 
 export interface PolicyConfig {
   energyReserve: number;      // keep this much energy beyond the path to the stairs
@@ -42,7 +49,7 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   const roll = g.player.pendingTalentRolls?.[0];
   if (roll) {
     const options: any[] = roll.options ?? roll;
-    const pick = chooseTalent(options, g.player.talents ?? []);
+    const pick = chooseTalent(options, g.player.talents ?? [], isWorld(g));
     return mk({ type: "select_talent", talentId: pick.talentId ?? pick.id }, `talent ${pick.talentId ?? pick.id}${pick.kind === "enhance" ? "+" : ""} (${options.map((o: any) => (o.talentId ?? o.id) + (o.kind === "enhance" ? "+" : "")).join("/")})`);
   }
   // 0b. upgrade choice (upgrade rooms)
@@ -77,6 +84,7 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   }
 
   const here = D.get(key(me.x, me.y));
+  const traps = trapTiles(g, mem);
   const adj = DIRS.map((d) => ({ d, p: step(me, d) })).map((o) => ({ ...o, e: b.enemyAt.get(key(o.p.x, o.p.y)) })).filter((o) => o.e);
 
   // 1. an adjacent enemy that dies to this hit is always the best move (removes its threat, free energy)
@@ -100,13 +108,23 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   if (here && (inArena ? here.dmg > 0 : here.dmg > 2 && (dodgeWorth || here.dmg >= 10))) { // several attackers firing together: always step out
     const safe = DIRS.map((d) => ({ d, p: step(me, d) }))
       .filter(({ p }) => b.walkable(p.x, p.y) && !b.enemyAt.has(key(p.x, p.y)))
-      .map((o) => ({ ...o, risk: D.get(key(o.p.x, o.p.y))?.dmg ?? 0 }))
+      .map((o) => ({ ...o, risk: (D.get(key(o.p.x, o.p.y))?.dmg ?? 0) + (traps.has(key(o.p.x, o.p.y)) ? TRAP_DMG : 0) }))
       .sort((a, c) => a.risk - c.risk);
     if (safe.length && safe[0].risk < here.dmg)
     {
       for (const id of here.ids) mem.dodges.set(id, (mem.dodges.get(id) ?? 0) + 1);
       return mk({ type: "move", direction: safe[0].d, targetX: safe[0].p.x, targetY: safe[0].p.y }, `dodge ${here.dmg}dmg from ${here.ids.map((x) => x.split("_").slice(-3).join("_")).join("/")}`);
     }
+  }
+
+  // 2a. standing on a known spike trap: it re-fires every 2 turns (5-9 dmg) -> step off (1 energy), ideally staying
+  //     next to the enemy we are fighting. Measured: 74 energy lost to traps in 15 runs, mostly by standing still on one.
+  if (traps.has(key(me.x, me.y)) && !inArena) {
+    const off = DIRS.map((d) => ({ d, p: step(me, d) }))
+      .filter(({ p }) => b.walkable(p.x, p.y) && !b.enemyAt.has(key(p.x, p.y)) && !traps.has(key(p.x, p.y)) && !(D.get(key(p.x, p.y))?.dmg))
+      .map((o) => ({ ...o, fight: DIRS.some((d) => b.enemyAt.has(key(step(o.p, d).x, step(o.p, d).y))) ? 1 : 0 }))
+      .sort((a, c) => c.fight - a.fight);
+    if (off.length) return mk({ type: "move", direction: off[0].d, targetX: off[0].p.x, targetY: off[0].p.y }, "step off spike trap");
   }
 
   // 2b. active items (shots, sticky bomb, midas, magnet, gas pedal, shock grenade, talisman)
@@ -120,7 +138,7 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   }
 
   // 4. navigation: choose a goal
-  const avoid = new Set(D.keys());
+  const avoid = new Set([...D.keys(), ...traps]);
   // don't path through tiles touching 2+ live enemies (walking into a cluster = several telegraphs at once)
   for (let y = 0; y < b.h; y++) for (let x = 0; x < b.w; x++) {
     if (!b.walkable(x, y)) continue;
@@ -222,17 +240,23 @@ export function shrineCost(uses: number) {
 
 
 // Priority tuned for v2: energy is both HP and movement, score = treasure. Higher = better.
+// Ranked by measured energy impact over a typical 6-floor run (15 run logs, 2026-09-19): damage taken ≈ 250 E,
+// ≈ 60 kills, ≈ 30 breakables. Armor/shield (-15% of ~250) and per-floor +5 (swift/renewal) are worth ~30-37 E;
+// vampiric only heals 1 E per proc (≈ 20 E/run); greed's +40% damage taken costs ≈ 100 E for +20% treasure — a
+// net loss, and worthless in World's Eve (paid in worldseeds). Apex guard rarely applies: slimes hit us after
+// our first strike, so they are no longer at full HP.
 const TALENT_PRIORITY: Record<string, number> = {
-  last_stand: 100, swift_steps: 95, vampiric: 92, greed: 90, renewal: 88, armor_plating: 85, divine_shield: 84, sharp_blade: 82,
-  momentum: 80, apex_guard: 78, salvage: 76, cleave: 74, survival_instinct: 72, scavenger: 70, prospector: 68, critical_strike: 66,
-  merciless: 64, frenzy: 62, poison_blade: 60, thorns: 58, scout: 56, disrupt: 54, corruption: 52, menace: 50, reach: 48,
-  apex_hunter: 46, berserker: 30, heavy_hitter: 10, glass_cannon: 5,
+  armor_plating: 95, divine_shield: 94, swift_steps: 93, renewal: 90, salvage: 86, last_stand: 82, sharp_blade: 80,
+  momentum: 76, vampiric: 70, cleave: 66, scavenger: 60, prospector: 60, critical_strike: 56, merciless: 54,
+  frenzy: 52, thorns: 52, poison_blade: 50, scout: 48, disrupt: 46, corruption: 46, survival_instinct: 45, reach: 44,
+  menace: 40, apex_guard: 35, apex_hunter: 35, berserker: 25, greed: 8, heavy_hitter: 5, glass_cannon: 3,
 };
+const TRAP_DMG = 7; // measured spike damage 5-9
 const TALENTS = new Map((talentTable as any[]).map((t) => [t.id, t]));
-export function chooseTalent(options: any[], owned: any[]): any {
+export function chooseTalent(options: any[], owned: any[], world = false): any {
   const score = (o: any) => {
     const id = o.talentId ?? o.id;
-    const base = TALENT_PRIORITY[id] ?? 40;
+    const base = world && id === "greed" ? 0 : TALENT_PRIORITY[id] ?? 40;
     return base + (o.kind === "enhance" ? 3 : 0); // enhancing a top talent beats a mediocre new one
   };
   return [...options].sort((a, c) => score(c) - score(a))[0];

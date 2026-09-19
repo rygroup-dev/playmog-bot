@@ -57,6 +57,10 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
         if (n >= 3) { mem.blacklist.set(tid, g.turnNumber + 15); noDmg.set(tid, 0); log(`blacklist ${tid} for 15 turns (no damage x3)`); }
       }
       for (const ev of r.events) {
+        if ((ev.type === "trap_triggered" || (ev.type === "arrow_trap_triggered" && ev.playerHit)) && g.player) {
+          const f = g.currentFloor ?? 0; if (!mem.traps.has(f)) mem.traps.set(f, new Set());
+          mem.traps.get(f)!.add(`${g.player.x},${g.player.y}`); // the tile we stand on after the action is the trap
+        }
         if (ev.type === "player_damaged") {
           const amt = Number(ev.amount ?? ev.damage ?? 0); damageTaken += amt;
           if (!dec.danger.includes(`${g.player.x},${g.player.y}`)) unpredicted++;
