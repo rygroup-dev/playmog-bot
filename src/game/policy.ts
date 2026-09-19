@@ -9,6 +9,7 @@ export interface PolicyMemory {
   blacklist: Map<string, number>;   // enemyId -> turn until which it is ignored
   dodges: Map<string, number>;      // enemyId -> dodges since we last damaged it
   traps: Map<number, Set<string>>;  // floor -> spike tiles that hit us (they re-fire every 2 turns while we stand there)
+  rerollTried?: number;             // talent level we already tried to reroll at
   arrows: Map<number, Set<string>>; // floor -> tiles an arrow trap hit us on (fires on entering its lane: avoid, never "step off" into it)
 }
 export const newMemory = (): PolicyMemory => ({ blacklist: new Map(), dodges: new Map(), traps: new Map(), arrows: new Map() });
@@ -56,6 +57,17 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   if (roll) {
     const options: any[] = roll.options ?? roll;
     const pick = chooseTalent(options, g.player.talents ?? [], isWorld(g));
+    // all three offers are weak (greed / glass cannon / heavy hitter / berserker…): pay for one reroll per level.
+    // Client rules: allowed once per level (v2TalentRerollUsedLevel != rolledAtLevel); cost 25, 50, 75, 125… treasure
+    // (fib by v2TalentRerollCount), /10 (min 1) in World's Eve. 25 treasure ≈ 6 energy vs ~30 energy for a good talent.
+    const n = g.player.v2TalentRerollCount ?? 0; const fib = n <= 0 ? 25 : n === 1 ? 50 : (() => { let t = 25, a = 50; for (let r = 2; r <= n; r++) { const x = t + a; t = a; a = x; } return a; })();
+    const cost = isWorld(g) ? Math.max(1, Math.floor(fib / 10)) : fib;
+    const best = talentScore(pick, isWorld(g));
+    if (best < 50 && roll.rolledAtLevel !== undefined && g.player.v2TalentRerollUsedLevel !== roll.rolledAtLevel && cost <= 50 && wallet(g) >= cost * 2
+        && mem.rerollTried !== roll.rolledAtLevel) { // one attempt per level even if the server rejects it
+      mem.rerollTried = roll.rolledAtLevel;
+      return mk({ type: "reroll_talent" }, `reroll talents (${options.map((o: any) => o.talentId ?? o.id).join("/")}) for ${cost}${isWorld(g) ? " seeds" : "T"}`);
+    }
     return mk({ type: "select_talent", talentId: pick.talentId ?? pick.id }, `talent ${pick.talentId ?? pick.id}${pick.kind === "enhance" ? "+" : ""} (${options.map((o: any) => (o.talentId ?? o.id) + (o.kind === "enhance" ? "+" : "")).join("/")})`);
   }
   // 0b. upgrade choice (upgrade rooms)
@@ -259,12 +271,13 @@ const TALENT_PRIORITY: Record<string, number> = {
 };
 const TRAP_DMG = 7; // measured spike damage 5-9
 const TALENTS = new Map((talentTable as any[]).map((t) => [t.id, t]));
+export function talentScore(o: any, world = false) {
+  const id = o.talentId ?? o.id;
+  const base = world && id === "greed" ? 0 : TALENT_PRIORITY[id] ?? 40;
+  return base + (o.kind === "enhance" ? 3 : 0); // enhancing a top talent beats a mediocre new one
+}
 export function chooseTalent(options: any[], owned: any[], world = false): any {
-  const score = (o: any) => {
-    const id = o.talentId ?? o.id;
-    const base = world && id === "greed" ? 0 : TALENT_PRIORITY[id] ?? 40;
-    return base + (o.kind === "enhance" ? 3 : 0); // enhancing a top talent beats a mediocre new one
-  };
+  const score = (o: any) => talentScore(o, world);
   return [...options].sort((a, c) => score(c) - score(a))[0];
 }
 export const talentInfo = (id: string) => TALENTS.get(id);

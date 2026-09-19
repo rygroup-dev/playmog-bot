@@ -62,3 +62,19 @@ describe("arrow traps and weather", () => {
     expect(killCost(e, { ...c, weatherHit: 4 })).toBeGreaterThan(killCost(e, c));
   });
 });
+
+describe("talent reroll", () => {
+  const roll = (ids: string[], at = 3) => ({ rolledAtLevel: at, options: ids.map((id) => ({ talentId: id, kind: "new" })) });
+  it("rerolls once per level when every offer is weak and we can afford it", () => {
+    const g: any = state(["#####", "#.@.#", "#####"]);
+    g.player.pendingTalentRolls = [roll(["greed", "glass_cannon", "heavy_hitter"])];
+    expect(decide(g).action).toMatchObject({ type: "reroll_talent" });
+    g.player.v2TalentRerollUsedLevel = 3;
+    expect(decide(g).action?.type).toBe("select_talent");
+  });
+  it("keeps a good offer", () => {
+    const g: any = state(["#####", "#.@.#", "#####"]);
+    g.player.pendingTalentRolls = [roll(["greed", "armor_plating", "heavy_hitter"])];
+    expect(decide(g).action).toMatchObject({ type: "select_talent", talentId: "armor_plating" });
+  });
+});
