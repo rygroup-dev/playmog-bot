@@ -17,7 +17,14 @@ const treasurePerDrop = (floor: number) => 12 + 3.2 * floor;           // 16 @f1
 const smallOrb = (floor: number) => 6 + 0.55 * floor;                   // 6.4 @f1 … 10.5 @f8
 const largeOrb = (floor: number) => 12.8 + 0.8 * floor;                 // 13.5 @f1 … 20 @f8
 
-export interface Ctx { floor: number; level: number; treasureMult: number; atk: number; energy: number }
+export interface Ctx { floor: number; level: number; treasureMult: number; atk: number; energy: number; weatherHit?: number }
+
+/** Extra energy each enemy hit costs under the current weather (client weather panel, verified text):
+ *  miasma = poison 1/turn × 5, heatwave = burn 1/turn × 3, blizzard = frostbite: our attacks cost 2 for 5 turns. */
+export function weatherHitCost(g: any): number {
+  const w = g?.v2Weather; const kind = typeof w === "string" ? w : w?.type ?? w?.kind ?? w?.weather ?? null;
+  return kind === "miasma" ? 4 : kind === "heatwave" ? 3 : kind === "blizzard" ? 4 : 0;
+}
 
 /** Expected energy lost (damage + dodge steps) to kill enemy `e`, from its telegraph cycle. */
 export function killCost(e: any, c: Ctx) {
@@ -29,7 +36,7 @@ export function killCost(e: any, c: Ctx) {
   let cost: number;
   if (hits <= charge) cost = 0;                                          // dies before it ever fires
   else if (charge >= 2) cost = 2 * Math.ceil((hits - charge) / charge);  // dodge + return per extra cycle
-  else cost = dmg * Math.ceil((hits - 1) / (1 + rest));                  // chargeTurns 1: tank one hit per cycle
+  else cost = (dmg + (c.weatherHit ?? 0)) * Math.ceil((hits - 1) / (1 + rest)); // chargeTurns 1: tank one hit per cycle
   const kind = cfg?.attackKind;
   if (kind === "dash" || kind === "projectile" || kind === "reach") cost *= 1.3; // hits from range
   if (kind === "aoe" || kind === "explode") cost *= 1.2;

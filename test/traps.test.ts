@@ -48,3 +48,17 @@ describe("talent choice", () => {
     expect(chooseTalent([opt("greed"), opt("glass_cannon")], [], true).talentId).toBe("glass_cannon");
   });
 });
+
+describe("arrow traps and weather", () => {
+  it("does not 'step off' an arrow-trap tile (arrows fire on entering the lane)", () => {
+    const g = state(["#####", "#.@.#", "#...#", "#####"], { enemies: [medium("m", 3, 1)] });
+    const m = newMemory(); m.arrows.set(2, new Set(["2,1"]));
+    expect(decide(g, undefined, m).action?.type).toBe("attack");
+  });
+  it("miasma makes tanking a chargeTurns=1 enemy more expensive", async () => {
+    const { killCost } = await import("../src/game/value.js");
+    const c = { floor: 3, level: 3, treasureMult: 1, atk: 12, energy: 80 };
+    const e = { spriteType: "v2_mediumslime", hp: 25, damage: 5, v2DamageMax: 8 };
+    expect(killCost(e, { ...c, weatherHit: 4 })).toBeGreaterThan(killCost(e, c));
+  });
+});

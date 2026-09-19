@@ -1,16 +1,22 @@
 import type { Action, RunAction } from "./room.js";
 import { Board, DIRS, dangerMap, dirTo, enemyConfig, footprint, key, manhattan, step, type P } from "./model.js";
 import { chooseItem, ITEM_VALUE } from "./items.js";
-import { breakValue, killCost, killValue, pickupValue, type Ctx } from "./value.js";
+import { breakValue, killCost, killValue, pickupValue, weatherHitCost, type Ctx } from "./value.js";
 import talentTable from "./talents.json" with { type: "json" };
 
 /** Run-scoped memory the runner keeps between turns (anti-loop). */
 export interface PolicyMemory {
   blacklist: Map<string, number>;   // enemyId -> turn until which it is ignored
   dodges: Map<string, number>;      // enemyId -> dodges since we last damaged it
-  traps: Map<number, Set<string>>;  // floor -> tiles where a hidden trap hit us (spikes re-fire every 2 turns while we stand there)
+  traps: Map<number, Set<string>>;  // floor -> spike tiles that hit us (they re-fire every 2 turns while we stand there)
+  arrows: Map<number, Set<string>>; // floor -> tiles an arrow trap hit us on (fires on entering its lane: avoid, never "step off" into it)
 }
-export const newMemory = (): PolicyMemory => ({ blacklist: new Map(), dodges: new Map(), traps: new Map() });
+export const newMemory = (): PolicyMemory => ({ blacklist: new Map(), dodges: new Map(), traps: new Map(), arrows: new Map() });
+function arrowTiles(g: any, mem: PolicyMemory) {
+  const out = new Set(mem.arrows?.get(g.currentFloor ?? 0) ?? []);
+  for (const t of g.arrowTraps ?? []) if (typeof t?.x === "number" && typeof t?.y === "number") out.add(key(t.x, t.y)); // revealed launchers
+  return out;
+}
 /** Known trap tiles on the current floor: the ones that already hit us + any the server reveals (trap sight). */
 export function trapTiles(g: any, mem: PolicyMemory): Set<string> {
   const out = new Set(mem.traps.get(g.currentFloor ?? 0) ?? []);
@@ -84,7 +90,7 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   }
 
   const here = D.get(key(me.x, me.y));
-  const traps = trapTiles(g, mem);
+  const traps = trapTiles(g, mem); const arrows = arrowTiles(g, mem);
   const adj = DIRS.map((d) => ({ d, p: step(me, d) })).map((o) => ({ ...o, e: b.enemyAt.get(key(o.p.x, o.p.y)) })).filter((o) => o.e);
 
   // 1. an adjacent enemy that dies to this hit is always the best move (removes its threat, free energy)
@@ -108,7 +114,7 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   if (here && (inArena ? here.dmg > 0 : here.dmg > 2 && (dodgeWorth || here.dmg >= 10))) { // several attackers firing together: always step out
     const safe = DIRS.map((d) => ({ d, p: step(me, d) }))
       .filter(({ p }) => b.walkable(p.x, p.y) && !b.enemyAt.has(key(p.x, p.y)))
-      .map((o) => ({ ...o, risk: (D.get(key(o.p.x, o.p.y))?.dmg ?? 0) + (traps.has(key(o.p.x, o.p.y)) ? TRAP_DMG : 0) }))
+      .map((o) => ({ ...o, risk: (D.get(key(o.p.x, o.p.y))?.dmg ?? 0) + (traps.has(key(o.p.x, o.p.y)) || arrows.has(key(o.p.x, o.p.y)) ? TRAP_DMG : 0) }))
       .sort((a, c) => a.risk - c.risk);
     if (safe.length && safe[0].risk < here.dmg)
     {
@@ -121,7 +127,7 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   //     next to the enemy we are fighting. Measured: 74 energy lost to traps in 15 runs, mostly by standing still on one.
   if (traps.has(key(me.x, me.y)) && !inArena) {
     const off = DIRS.map((d) => ({ d, p: step(me, d) }))
-      .filter(({ p }) => b.walkable(p.x, p.y) && !b.enemyAt.has(key(p.x, p.y)) && !traps.has(key(p.x, p.y)) && !(D.get(key(p.x, p.y))?.dmg))
+      .filter(({ p }) => b.walkable(p.x, p.y) && !b.enemyAt.has(key(p.x, p.y)) && !traps.has(key(p.x, p.y)) && !arrows.has(key(p.x, p.y)) && !(D.get(key(p.x, p.y))?.dmg))
       .map((o) => ({ ...o, fight: DIRS.some((d) => b.enemyAt.has(key(step(o.p, d).x, step(o.p, d).y))) ? 1 : 0 }))
       .sort((a, c) => c.fight - a.fight);
     if (off.length) return mk({ type: "move", direction: off[0].d, targetX: off[0].p.x, targetY: off[0].p.y }, "step off spike trap");
@@ -138,7 +144,7 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   }
 
   // 4. navigation: choose a goal
-  const avoid = new Set([...D.keys(), ...traps]);
+  const avoid = new Set([...D.keys(), ...traps, ...arrows]);
   // don't path through tiles touching 2+ live enemies (walking into a cluster = several telegraphs at once)
   for (let y = 0; y < b.h; y++) for (let x = 0; x < b.w; x++) {
     if (!b.walkable(x, y)) continue;
@@ -149,7 +155,7 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   const { dist: distAll, prev: prevAll } = b.bfs(me);
   const stairsDist = nearestStairs(b, distAll, me);
   // ---- value model (src/game/value.ts): net = value(EE) - cost(energy); highest net wins ----
-  const ctx: Ctx = { floor: g.currentFloor ?? 1, level: g.player.level ?? 0, atk, energy,
+  const ctx: Ctx = { floor: g.currentFloor ?? 1, level: g.player.level ?? 0, atk, energy, weatherHit: weatherHitCost(g),
     treasureMult: (g.player.talents ?? []).some((t: any) => (t.id ?? t.talentId ?? t) === "greed") ? 1.2 : 1 };
   const maxE = g.player.maxEnergy ?? 100;
   // energy is also HP: the lower it is, the less damage we accept for a given reward

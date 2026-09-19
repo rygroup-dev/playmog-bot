@@ -58,8 +58,15 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
       }
       for (const ev of r.events) {
         if ((ev.type === "trap_triggered" || (ev.type === "arrow_trap_triggered" && ev.playerHit)) && g.player) {
-          const f = g.currentFloor ?? 0; if (!mem.traps.has(f)) mem.traps.set(f, new Set());
-          mem.traps.get(f)!.add(`${g.player.x},${g.player.y}`); // the tile we stand on after the action is the trap
+          const m = ev.type === "trap_triggered" ? mem.traps : mem.arrows; const f = g.currentFloor ?? 0;
+          if (!m.has(f)) m.set(f, new Set());
+          m.get(f)!.add(`${g.player.x},${g.player.y}`); // the tile we stand on after the action is where it hit
+          // an arrow lane runs along our movement axis (walking along it gets hit on every tile): avoid ±4 tiles of it
+          const d = dec.action?.type === "move" ? dec.action.direction : null;
+          if (m === mem.arrows && d) for (let k = -4; k <= 4; k++) {
+            const x = g.player.x + (d === "left" || d === "right" ? k : 0), y = g.player.y + (d === "up" || d === "down" ? k : 0);
+            m.get(f)!.add(`${x},${y}`);
+          }
         }
         if (ev.type === "player_damaged") {
           const amt = Number(ev.amount ?? ev.damage ?? 0); damageTaken += amt;
