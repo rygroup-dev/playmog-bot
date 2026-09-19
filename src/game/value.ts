@@ -63,7 +63,7 @@ export function pickupValue(p: any, c: Ctx) {
     case "marble": return 1.5;
     case "golden_corn": return 0.8;
     case "item": return 6;
-    case "arcade_key": case "raffle_ticket": case "gem": return 50;
+    case "arcade_key": case "gem": return 50;
     default: return v ? v / TPE : 2;
   }
 }
