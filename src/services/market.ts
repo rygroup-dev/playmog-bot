@@ -24,7 +24,8 @@ const netOfSale = (price: number) => price - Math.max(1, Math.floor(price * LIST
 interface Pos { qty: number; cost: number; since: number } // cost = VALOR paid per unit (avg)
 interface MMState { pos: Record<string, Pos>; realized: number; fills: number; pausedUntil: Record<string, number>; lastSellPlaced: Record<string, number>;
   seenActivity: string[]; halted: string | null; startedAt: number; selected: string[]; selectedAt: number; scores: AssetScore[];
-  tracked: Record<string, { id: string; side: "BUY" | "SELL"; key: string; price: number; qty: number; name: string }> }
+  tracked: Record<string, { id: string; side: "BUY" | "SELL"; key: string; price: number; qty: number; name: string }>;
+  outbids: Record<string, number[]> }
 
 export class MarketMaker {
   busy = false; lastRunAt = 0; lastError: string | null = null;
@@ -32,7 +33,7 @@ export class MarketMaker {
 
   cfg(): MMConfig { return { ...DEFAULT_MM, ...this.store.get<Partial<MMConfig>>("mm.config", {}) }; }
   setCfg(p: Partial<MMConfig>) { const c = { ...this.cfg(), ...p }; this.store.set("mm.config", c); return c; }
-  state(): MMState { return { pos: {}, realized: 0, fills: 0, pausedUntil: {}, lastSellPlaced: {}, seenActivity: [], halted: null, startedAt: Date.now(), selected: [], selectedAt: 0, scores: [], tracked: {}, ...this.store.get<Partial<MMState>>("mm.state", {}) }; }
+  state(): MMState { return { pos: {}, realized: 0, fills: 0, pausedUntil: {}, lastSellPlaced: {}, seenActivity: [], halted: null, startedAt: Date.now(), selected: [], selectedAt: 0, scores: [], tracked: {}, outbids: {}, ...this.store.get<Partial<MMState>>("mm.state", {}) }; }
 
   /**
    * Smart selection: score every tradable asset from live data — net edge after fees at best bid+1 / ask-1,
@@ -170,9 +171,11 @@ export class MarketMaker {
         }
       }
       const active = cfg.autoSelect ? s.selected : cfg.assets;
-      const managed = [...new Set([...active, ...Object.entries(s.pos).filter(([, p]) => p.qty > 0).map(([k]) => k)])];
       const book = await this.summary();
-      const orders = await this.myOrders();
+      const orders0 = await this.myOrders();
+      // include assets that still hold our orders, so buys on deselected assets get cancelled (no orphaned capital)
+      const managed = [...new Set([...active, ...Object.entries(s.pos).filter(([, p]) => p.qty > 0).map(([k]) => k), ...orders0.map((o) => o.assetKey)])];
+      const orders = orders0;
       const inv = (await this.api.get("/api/items/balances")).balances ?? {};
       let valor = Number((await this.api.get("/api/shop/valor/balance")).valorBalance);
       // capital already committed = open BUY orders + inventory at cost
@@ -221,7 +224,13 @@ export class MarketMaker {
           const stillBest = Number(myBuy.price) >= bid;
           const drop = () => { const i = orders.indexOf(myBuy); if (i >= 0) orders.splice(i, 1); }; // keep capital math current
           if (!edgeOk) { await this.cancel(myBuy.id); drop(); continue; }
-          if (!stillBest) { await this.cancel(myBuy.id); drop(); valor += Number(myBuy.price); this.store.event("info", `mm reprice ${key}: outbid at ${myBuy.price}, bid now ${bid}`); }
+          if (!stillBest) {
+            // bid war with another bot (outbid +1 every tick): after 3 outbids in 10 min, step back for 20 min
+            const hist = (s.outbids[key] ?? []).filter((t) => Date.now() - t < 10 * 60e3); hist.push(Date.now()); s.outbids[key] = hist;
+            await this.cancel(myBuy.id); drop(); valor += Number(myBuy.price);
+            if (hist.length >= 3) { s.pausedUntil[key] = Date.now() + 20 * 60e3; s.outbids[key] = []; this.store.event("info", `mm ${key}: bid war detected, backing off 20 min`); continue; }
+            this.store.event("info", `mm reprice ${key}: outbid at ${myBuy.price}, bid now ${bid}`);
+          }
           else continue;
         }
         if (!edgeOk) continue;
