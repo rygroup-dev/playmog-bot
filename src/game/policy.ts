@@ -363,6 +363,10 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
 function wantsRoom(prompt: any, g: any, cfg: PolicyConfig) {
   const rt = prompt.roomType ?? null;
   if (rt === null) return true;
+  // gambling rooms are entered only while betting is switched on and the daily budget is left; otherwise they are
+  // just a detour (the bot still passes through one when it is the only way down)
+  if (rt === "ringrace") return !!cfg.gambleRingRace && (cfg.gambleBetsLeft ?? 0) > 0 && wallet(g) >= 20;
+  if (rt === "portalgambit") return !!cfg.gamblePortalGambit && (cfg.gambleBetsLeft ?? 0) > 0 && wallet(g) >= 20;
   if (!(cfg.acceptRooms ?? []).includes(rt)) return false;
   const p = g.player;
   if (rt === "shrine") return p.energy <= p.maxEnergy - 20 && wallet(g) >= scaled(g, shrineCost(p.v2ShrineUseCount ?? 0));

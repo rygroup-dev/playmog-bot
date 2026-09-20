@@ -182,3 +182,23 @@ describe("portal gambit navigation", () => {
     expect(decide(g as any).runAction).toMatchObject({ type: "portal_gambit_bet" });
   });
 });
+
+describe("entering gambling rooms", () => {
+  const prompt = (roomType: string) => {
+    const g: any = state(["#####", "#.@.#", "#####"]);
+    g.player.treasure = 500; g.v2UpgradeRoomPrompt = { roomType, stairsId: "s1" };
+    return g;
+  };
+  it("skips the derby while betting is off", () => {
+    const d = decide(prompt("ringrace") as any);
+    expect(d.runAction).toBeUndefined();
+  });
+  it("enters the derby when betting is on and budget is left", () => {
+    const d = decide(prompt("ringrace") as any, { ...DEFAULT_POLICY, gambleRingRace: true, gambleBetsLeft: 2 });
+    expect(d.runAction).toMatchObject({ type: "enter_upgrade_room" });
+  });
+  it("skips it again once the budget is gone", () => {
+    const d = decide(prompt("portalgambit") as any, { ...DEFAULT_POLICY, gamblePortalGambit: true, gambleBetsLeft: 0 });
+    expect(d.runAction).toBeUndefined();
+  });
+});
