@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decide, newMemory, chooseTalent } from "../src/game/policy.js";
+import { decide, newMemory, chooseTalent, DEFAULT_POLICY } from "../src/game/policy.js";
 
 function state(rows: string[], extra: Partial<any> = {}) {
   const map: number[][] = []; let px = 0, py = 0;
@@ -132,5 +132,27 @@ describe("bounty chest", () => {
     g.pickups = [chest(5, 1)];
     const d = decide(g);
     if (d.action?.type === "move") expect((d.action as any).targetX).toBeLessThan(4);
+  });
+});
+
+describe("gambling rooms", () => {
+  const room = (type: string, extra: any = {}) => {
+    const g: any = state(["#####", "#.@.#", "#####"]);
+    g.v2CurrentRoomType = type; g.player.treasure = 1000;
+    return { ...g, ...extra };
+  };
+  it("passes through the derby with a zero stake by default", () => {
+    const d = decide({ ...room("ringrace"), v2RingRaceWager: null } as any);
+    expect(d.runAction).toMatchObject({ type: "ring_race_bet", wager: 0 });
+  });
+  it("stakes the configured share when the owner turns betting on", () => {
+    const d = decide({ ...room("ringrace"), v2RingRaceWager: null } as any, { ...DEFAULT_POLICY, gambleRingRace: true, gambleWagerPct: 0.05 });
+    expect((d.runAction as any).wager).toBe(50);
+    expect((d.runAction as any).lane).toBeGreaterThanOrEqual(0);
+    expect((d.runAction as any).lane).toBeLessThanOrEqual(3);
+  });
+  it("caps the stake at the game's own 10% limit", () => {
+    const d = decide({ ...room("portalgambit"), v2PortalGambitWager: null } as any, { ...DEFAULT_POLICY, gamblePortalGambit: true, gambleWagerPct: 0.9 });
+    expect((d.runAction as any)).toMatchObject({ type: "portal_gambit_bet", wager: 100 });
   });
 });

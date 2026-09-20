@@ -31,6 +31,9 @@ export function trapTiles(g: any, mem: PolicyMemory): Set<string> {
 }
 
 export interface PolicyConfig {
+  gambleRingRace?: boolean;   // stake in the Ringjak Derby room (house keeps 12.5%)
+  gamblePortalGambit?: boolean; // stake in Portal Gambit
+  gambleWagerPct?: number;    // share of treasure/worldseeds to stake, capped at the game's own 10% limit
   energyReserve: number;      // keep this much energy beyond the path to the stairs
   exploreSlack: number;       // extra energy needed before chasing optional loot/exploration
   maxLootDetour: number;      // max path length to go for a breakable/pickup
@@ -86,6 +89,22 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   const prompt = g.v2UpgradeRoomPrompt;
   if (prompt && (wantsRoom(prompt, g, cfg) || (mem.noGoal ?? 0) >= 2)) // nothing left on this floor: descend even through a room we would normally decline
     return { runAction: { type: "enter_upgrade_room" }, reason: `enter ${prompt.roomType ?? "next floor"} via ${prompt.stairsId}${wantsRoom(prompt, g, cfg) ? "" : " (nothing left here)"}`, danger: dangerList };
+
+  // gambling rooms: the bet is a run action. Both games favour the house (Derby 4 lanes: 3x win / 0.5x place = 87.5%
+  // return; Portal Gambit: five rows, one wrong portal each, 3x if all cleared), so betting is off unless the owner
+  // switches it on. Wager 0 keeps walking through the room without staking anything.
+  {
+    const rt = g.v2CurrentRoomType ?? null;
+    const wallet0 = wallet(g);
+    if (rt === "ringrace" && g.v2RingRaceWager == null) {
+      const want = cfg.gambleRingRace ? Math.max(1, Math.floor(wallet0 * Math.min(cfg.gambleWagerPct ?? 0.05, 0.1))) : 0;
+      return { runAction: { type: "ring_race_bet", lane: Math.floor(Math.random() * 4), wager: want }, reason: want ? `ring race bet ${want}` : "ring race: no bet (pass through)", danger: dangerList };
+    }
+    if (rt === "portalgambit" && g.v2PortalGambitWager == null) {
+      const want = cfg.gamblePortalGambit ? Math.max(1, Math.floor(wallet0 * Math.min(cfg.gambleWagerPct ?? 0.05, 0.1))) : 0;
+      return { runAction: { type: "portal_gambit_bet", wager: want }, reason: want ? `portal gambit bet ${want}` : "portal gambit: no bet (pass through)", danger: dangerList };
+    }
+  }
 
   // special rooms: shrine / armory interactions are "break" on chest NPCs (client eJ()); first hit inspects, second confirms
   const room = g.v2CurrentRoomType ?? null;

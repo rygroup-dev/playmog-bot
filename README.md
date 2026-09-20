@@ -25,11 +25,15 @@ The bot plays runs by itself, claims every free reward, runs a small market-maki
 - Expedition Pass purchase and renewal reminders.
 - World's Eve loop: auto-buys up to N Eve Keys a day (capped price, never from market capital), redeems worldseeds into caches, and sells tradable cache loot on the marketplace. Keeps Eve Keys, Adventurer Mint Passes, and gas when you own a staked hero.
 - Enters Golden Corn, Eve Key and Genesis Hero raffle tickets automatically shortly before each draw closes.
+- Opens bounty chests. A chest arrives as a pickup that blocks a 3x3 area and takes three hits from beside it; in the bounty arena, opening it is what unlocks the exit gates.
+- Reads the weather. Storm lightning marks six tiles one action ahead and is dodged; miasma, heatwave and blizzard each make an enemy hit cost more, so the bot picks its fights accordingly.
+- Handles spike traps and arrow-trap lanes, remembers tiles the server refuses to walk onto, drops goals it never gets closer to, and uses the game's teleport when a floor leaves it no way forward.
 - Self-heals when the game ships a new client version (`CLIENT_OUTDATED`), and pauses the market cleanly while the game has it disabled.
 - Game update watcher: checks the game's deploy every 5 minutes. On a new deploy it re-reads the live client, follows a new client version, diffs the enemy rules against what the AI uses (and switches to the new numbers), then sends a Telegram alert that lists exactly what changed. It also alerts when the game server is paused for maintenance.
 - Incoming funds alert, plus an optional one-shot market top-up: `npx tsx scripts/fund-plan.ts 15 3000` deposits the next 15 USDC.e that arrives into VALOR and raises market capital to 3,000 VALOR.
 
 **Marketplace**
+- Shows exactly what is listed for sale, at what price, with the net after fees, next to the open buy orders and the stock on hand.
 - Market-making pilot: scores every tradable item by net edge after fees, daily volume, buyer count, volatility and price trend, then quotes the best ones (buy at best bid + 1, list at best ask − 1).
 - Never sells below break-even except on stop-loss, never undercuts its own listing, and halts completely at a loss limit.
 - Watches marketplace availability, with limit orders and instant buys tracked separately, and sends 🔴 closed and 🟢 open alerts. The instant-buy probe is a fill-or-kill order at 1 VALOR, so it can never fill or rest on the book. When instant buys are disabled, item purchases fall back to a limit order at the lowest ask.
@@ -117,32 +121,103 @@ npm start
 | Command | What it does |
 |---|---|
 | `/menu` | Main menu and status |
-| `/dash` | Full dashboard: wallet, VALOR, pass, keys, weekly pool, EV, last 24 h |
+| `/dash` | Dashboard: wallet, pass, weekly pool, market P&L, World's Eve, last 24 h |
 | `/run` | Live run status; start or stop a run |
-| `/wallet` | Balances on 3 chains, swap and bridge through Relay (quote, then confirm) |
-| `/keys` | Arcade keys (buying needs confirmation) and live EV |
-| `/claims` | Daily keys, upvote, quests, payouts, jackpot, withdraw VALOR |
-| `/pass` | Expedition Pass status and renewal |
-| `/market` | Market-making P&L, positions, orders, item scan |
+| `/inv` | Inventory: worldseeds, keys, tickets, items, what is sellable and for how much |
+| `/wallet` | Balances on three chains, swap, bridge, and USDC.e → VALOR deposits |
+| `/keys` | Arcade keys and the live expected value per key |
+| `/claims` | Daily keys, upvote, quests, payouts, jackpot, VALOR withdrawal |
+| `/pass` | Expedition Pass status, renewal, referral code and stats |
+| `/market` | Market-making: P&L, the items currently listed for sale, open buy orders, stock, item scan |
+| `/gamble` | Every game of chance in MoG with its real odds, plus the betting switches |
 | `/history` | Recent runs, transactions and system log |
 | `/lb` | Leaderboards |
-| `/settings` | Autopilot switches, Arcade cap, EV threshold, withdraw reserve |
+| `/settings` | Autopilot switches and caps |
 | `/pause` | Kill-switch: pause or resume all automation |
+
+Typed amounts, for when the preset buttons do not fit:
+
+| Command | Meaning |
+|---|---|
+| `/swap eth 12` | Swap $12 worth of ETH into USDC.e on Abstract |
+| `/swap usdc 7` | Swap $7 of USDC.e back into ETH |
+| `/valor 12` | Deposit 12 USDC.e into the game as 1,200 VALOR (no fee) |
+| `/withdraw 800` | Withdraw 800 VALOR to USDC.e (min 500, 5% fee, 24 h delay) |
 
 ---
 
-## Configuration
+## Settings
 
-Runtime settings live in SQLite and are changed from **⚙️ Settings**. The defaults:
+Runtime settings live in SQLite and are changed from **⚙️ Settings** (or **🎲 Judi & Gacha** for the betting switches). Nothing here needs a redeploy. Every setting and its default:
 
-| Setting | Default |
-|---|---|
-| Auto daily claim / upvote / Expedition | on |
-| Auto Arcade | off; when on, capped at $5/day and gated by EV ≥ threshold |
-| EV threshold | $1.00 back per $1 key, using the bot's own measured treasure per key |
-| Auto VALOR withdraw | on, keeps 1,000 VALOR plus any market capital |
-| Special rooms | shrine, armory, bounty arena |
-| Market | off until funded and enabled from `/market` |
+### Free value (safe to leave on)
+
+| Setting | Default | What it does |
+|---|---|---|
+| Auto daily claim | on | Claims the Expedition Pass daily keys |
+| Auto upvote | on | Claims the weekly upvote reward (3/5/8 keys by pass tier); costs a little gas |
+| Auto Expedition | on | Plays every Expedition key as it arrives |
+| Expedition reserve keys | 0 | Keeps this many keys unplayed, e.g. if you want to play some yourself |
+| Play owned Arcade keys | on | Plays Arcade keys you already own (from caches or gifts). Never buys them |
+| Notify every run | on | A Telegram message per finished run. Turn off for quiet operation |
+| Special rooms | shrine, armory, bounty arena | Which optional rooms the bot enters. It always passes through any room when it is the only way down |
+
+### Spending (read before turning on)
+
+| Setting | Default | What it does |
+|---|---|---|
+| Auto Arcade | off | Buys Arcade keys at 1 USDC.e each. Only fires when the measured EV clears the threshold below |
+| Arcade daily cap | $5 | Hard ceiling on Arcade spending per 24 h |
+| Arcade keys per run | 1 | Keys spent per Arcade run |
+| EV threshold | $1.00 | Minimum expected return per $1 key, computed from **your own** treasure per key, not from top players |
+| Auto World's Eve | off | Buys Eve Keys on the marketplace and plays World's Eve runs |
+| World's Eve buys per day | 3 | Hard ceiling on Eve Key purchases per UTC day |
+| Eve Key max price | 250 VALOR | Never pays more than this for a key |
+| World's Eve USDC.e reserve | $3 | When VALOR is reserved for market capital, Eve Keys are paid from wallet USDC.e, but never below this reserve |
+
+### Loot and rewards
+
+| Setting | Default | What it does |
+|---|---|---|
+| Redeem caches | on | Turns 500 worldseeds into a World's Eve Cache, **opens it**, and opens any skin boxes |
+| Sell loot | on | Lists tradable loot at best ask − 1, repricing every 2 h. Keeps Expedition Keys, Adventurer Mint Passes, Golden Corn, Eve Keys (while World's Eve is on) and gas when you own a staked hero |
+| Auto VALOR withdraw | on | Moves VALOR above the reserve to USDC.e (initiate, then finalize after 24 h) |
+| Withdraw reserve | 1,000 VALOR | Kept in-game for the next pass. Market capital is always excluded on top of this |
+
+Raffles need no setting: Golden Corn, Eve Key and Genesis Hero tickets are entered automatically about three hours before each draw closes.
+
+### Betting (off by default, and it should stay off)
+
+Every game of chance in MoG pays back less than it takes. The numbers come from the game client itself:
+
+| Game | Rules | Average return |
+|---|---|---|
+| Ringjak Derby (in-run room) | 4 runners, equal chance; 1st pays 3×, 2nd returns 0.5×; stake up to 10% of treasure | **87.5%** |
+| Portal Gambit (in-run room) | Five rows, one wrong portal per row; clear all five to triple the stake | below 100% |
+| Ringjak Racing (lobby, VALOR) | 10–100 VALOR in steps of 5; 1st pays 3×, 2nd returns 0.8× | **95%** |
+| Fortune's Gambit (Emporium) | Wager worldseeds, double or nothing | currently disabled server-side |
+
+| Setting | Default | What it does |
+|---|---|---|
+| Bet in Ringjak Derby | off | When off, the bot enters the room, stakes **0**, and walks on |
+| Bet in Portal Gambit | off | Same, with a zero stake |
+| Stake size | 5% | Share of treasure (or worldseeds in World's Eve) to stake when betting is on, capped at the game's own 10% limit |
+
+### Market-making
+
+Changed from **📈 Market**. Off until you fund it and switch it on.
+
+| Setting | Default | What it does |
+|---|---|---|
+| Capital | 1,500 VALOR | Ceiling on VALOR tied up in buy orders and stock |
+| Max assets | 2 | How many items to quote at once |
+| Units per asset | 1 | Position size |
+| Min edge | 20 VALOR / 5% | Minimum profit after the 1% listing and 4% success fees before quoting |
+| Stop-loss | 10% | Sells a position that has dropped this far |
+| Loss limit | 300 VALOR | Halts market-making entirely and cancels buy orders |
+| Auto-select | on | Rescores every tradable item every 30 min and rotates to the best ones |
+
+The market also parks an item for three hours when another bot keeps outbidding it, and moves that capital to the next-best item.
 
 ---
 

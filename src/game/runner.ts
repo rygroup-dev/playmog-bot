@@ -112,9 +112,9 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
           const k = ev.pickupType ?? ev.itemType ?? ev.type; loot[k] = (loot[k] ?? 0) + Number(ev.amount ?? ev.value ?? 1);
         }
       }
-      // storm weather costs 25 energy per lightning strike; dump the raw server state so we can find how the
-      // incoming strike is telegraphed (the field is not in any client chunk we can download)
-      if (String(before.v2Weather ?? "").includes("storm") || String((before.v2Weather as any)?.type ?? "").includes("storm")) {
+      // research hook (off unless STORM_PROBE=1): dumps the raw state during storms. The lightning telegraph
+      // (v2Weather.strikes) was found this way; keeping it off keeps the logs small.
+      if (process.env.STORM_PROBE === "1" && String((before.v2Weather as any)?.type ?? before.v2Weather ?? "").includes("storm")) {
         try { mkdirSync("data/storm", { recursive: true }); appendFileSync(`data/storm/${runId}.jsonl`, JSON.stringify({ turn: before.turnNumber, pos: [before.player.x, before.player.y], state: before }) + "\n"); } catch { /* probe only */ }
       }
       appendFileSync(file, JSON.stringify({ t: Date.now(), turn: before.turnNumber, floor: before.currentFloor, pos: [before.player.x, before.player.y], energy: before.player.energy,

@@ -396,6 +396,16 @@ export class MarketMaker {
       if (p.qty && a?.highestBid) unreal += (netOfSale(Number(a.lowestAsk ?? a.highestBid) - 1) - p.cost) * p.qty;
       return { key: k, name: a?.displayName ?? k, bid: a?.highestBid, ask: a?.lowestAsk, qty: p.qty, cost: Math.round(p.cost), orders: orders.filter((o) => o.assetKey === k).map((o) => `${o.side}@${o.price}`), paused: (s.pausedUntil[k] ?? 0) > Date.now() };
     });
-    return { cfg, state: s, lines, unrealized: Math.round(unreal) };
+    // every open order, including loot listings for assets we do not market-make, so the UI can show what is on sale
+    const open = orders.map((o: any) => {
+      const a = book.get(o.assetKey); const price = Number(o.price); const qty = Number(o.quantity) - Number(o.filledQty ?? 0);
+      const cost = s.pos[o.assetKey]?.cost ?? 0;
+      return { id: o.id, side: o.side as "BUY" | "SELL", key: o.assetKey, name: a?.displayName ?? o.assetKey, price, qty,
+        bid: Number(a?.highestBid ?? 0), ask: Number(a?.lowestAsk ?? 0), ageMin: Math.round((Date.now() - Date.parse(o.createdAt)) / 60000),
+        best: o.side === "BUY" ? price >= Number(a?.highestBid ?? 0) : price <= Number(a?.lowestAsk ?? 0),
+        net: o.side === "SELL" ? netOfSale(price) * qty : 0, profit: o.side === "SELL" ? Math.round((netOfSale(price) - cost) * qty) : 0,
+        loot: !!s.tracked[o.id]?.loot };
+    });
+    return { cfg, state: s, lines, open, unrealized: Math.round(unreal) };
   }
 }

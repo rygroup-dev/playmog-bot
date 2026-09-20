@@ -38,6 +38,7 @@ export const BOT_COMMANDS = [
   { command: "wallet", description: "💰 Wallet, swap & bridge" },
   { command: "keys", description: "🗝 Arcade & Expedition key" },
   { command: "inv", description: "🎒 Inventory: item, worldseed, key, harga jual" },
+  { command: "gamble", description: "🎲 Judi & gacha: peluang, biaya, dan saklar taruhan" },
   { command: "swap", description: "⇄ Swap jumlah bebas: /swap eth 12 atau /swap usdc 7" },
   { command: "valor", description: "💵 USDC.e → VALOR jumlah bebas: /valor 12" },
   { command: "withdraw", description: "🏦 VALOR → USDC.e jumlah bebas: /withdraw 800" },
@@ -194,6 +195,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       .text("🎁 Klaim", "v:claims").text("📜 Riwayat", "v:hist").row()
       .text("🏆 Leaderboard", "v:lb").text("🎫 Pass", "v:pass").row()
       .text("📈 Market", "v:market").text("🎒 Inventory", "v:inv").row()
+      .text("🎲 Judi & Gacha", "v:gamble").row()
       .text("⚙️ Setting", "v:set").text("❓ Bantuan", "v:help").row()
       .text(st.paused ? "▶️ RESUME AUTOPILOT" : "⏸ PAUSE (kill-switch)", "a:togglePause").text("🔄", "v:menu");
     return { text: lines.filter(Boolean).join("\n"), kb };
@@ -201,6 +203,16 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
 
   async function vDash(): Promise<View> {
     const s = await snap(8_000); const st = store.settings();
+    const mm = await market.report().catch(() => null);
+    const amber = await api.get("/api/items/amber").then((r) => Number(r.balance ?? 0)).catch(() => 0);
+    const mmLine = {
+      enabled: mm?.cfg.enabled ?? false, halted: mm?.state.halted ?? null, pnl: Math.round(mm?.state.realized ?? 0), fills: mm?.state.fills ?? 0,
+      capital: mm?.cfg.capitalValor ?? 0, amber,
+      buys: mm?.open.filter((o: any) => o.side === "BUY").length ?? 0,
+      sells: mm?.open.filter((o: any) => o.side === "SELL").length ?? 0,
+      sellNames: (mm?.open.filter((o: any) => o.side === "SELL").map((o: any) => o.name).join(", ") ?? "").slice(0, 60),
+      locked: Math.round(mm?.open.filter((o: any) => o.side === "BUY").reduce((t: number, o: any) => t + o.price * o.qty, 0) ?? 0),
+    };
     const pass = s.pass; const cw = s.claims?.currentWeek; const it = s.items ?? {};
     const since = Date.now() - 24 * 3600e3;
     const day = store.runStatsSince(since);
@@ -221,7 +233,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
         : `  ⚫️ Tidak aktif${pass?.lastTier ? ` (terakhir ${pass.lastTier})` : ""}`,
       section("🗝 Inventory"),
       row("Arcade key", `<b>${s.keys ?? "?"}</b>`), row("Expedition key", `<b>${s.expKeys ?? "?"}</b>`), row("Golden Corn", `<b>${num(it["item.golden_corn"])}</b>`),
-      ...extraItems.map(([k, v]) => row(esc(k), num(v))),
+      ...extraItems.map(([k, v]) => row(esc(FRIENDLY[k] ?? prettyKey(k)), num(v))),
       row("Upvote", s.upvote?.claimed ? `✅ epoch ${s.upvote.epoch}` : `⏳ +${s.upvote?.reward ?? "?"} key tersedia`) + ` · reset ${until(s.upvote?.epochEndsAtIso)}`,
       section(`📈 Minggu ${cw?.weekNumber ?? "?"} · reset ${until(cw?.weekEnd)}`),
       row("Treasure / Marbles", `${num(cw?.userTreasure)} / ${num(cw?.userMarbles)}`),
@@ -231,6 +243,14 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       s.pool ? row("EV pemain top", `${usd(s.pool.usdPerKeyTop)} · bot kita ${s.pool.ownTreasurePerKey ? num(s.pool.ownTreasurePerKey) : "?"} treasure/key`) : "",
       row("Earnings total", `${num(Number(s.earnings?.totalValor ?? 0))} VALOR`),
       s.expRun ? row("Expedition best", `💎 ${num(s.expRun.treasure)} · rank <b>#${s.expRun.rank}</b>`) : "",
+      section("📈 Market-making"),
+      row("Status", mmLine.enabled ? (mmLine.halted ? `🛑 ${esc(mmLine.halted)}` : "🟢 aktif") : "⚫️ mati"),
+      row("Profit", `<b>${mmLine.pnl >= 0 ? "+" : ""}${num(mmLine.pnl)} VALOR</b> (${usd(mmLine.pnl / 100)}) · ${mmLine.fills} transaksi`),
+      row("Order", `${mmLine.buys} beli · ${mmLine.sells} jual${mmLine.sellNames ? ` (${esc(mmLine.sellNames)})` : ""}`),
+      row("Modal", `${num(mmLine.capital)} VALOR · terkunci ${num(mmLine.locked)}`),
+      section("🌍 World's Eve"),
+      row("Worldseed", `<b>${num(mmLine.amber)}</b> · cache berikutnya ${num(Math.max(0, 500 - (mmLine.amber % 500)))} lagi`),
+      row("Auto", `${on(st.autoWorld)} · maks ${st.worldBuysPerDay}×/hari @≤${num(st.worldKeyMaxPrice)} VALOR`),
       section("🤖 Autopilot 24 jam"),
       day.length ? pre(["MODE        RUN  TREASURE  MARBLE  BEST", ...day.map((r) => `${String(r.run_type).padEnd(10)} ${String(r.n).padStart(4)} ${String(r.treasure ?? 0).padStart(9)} ${String(r.marbles ?? 0).padStart(7)}  ${r.best} f${r.best_floor}`)]) : "  belum ada run",
       row("Belanja 24j", `${usd(spent24)} (cap Arcade ${usd(st.arcadeDailyUsdCap, 0)})`),
@@ -285,6 +305,10 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
     return { text: lines.join("\n"), kb: nav(kb, "v:wallet") };
   }
 
+  const FRIENDLY: Record<string, string> = { "item.golden_corn": "Golden Corn", "ticket.raffle": "Tiket undian", "cache.worlds_eve": "World's Eve Cache",
+    "cache.worlds_eve_premium": "World's Eve Cache Premium", "key.expedition": "Expedition Key", "key.world": "Eve Key", "pass.adventurer_mint": "Adventurer Mint Pass" };
+  const prettyKey = (k: string) => k.replace(/^[a-z_]+\./, "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
   /** Everything the account holds, with live market prices and what the loot seller does with it. */
   async function vInv(): Promise<View> {
     const st = store.settings();
@@ -306,7 +330,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       const bid = Number(a?.lowestAsk ?? 0) ? Number(a.lowestAsk) - 1 : Number(a?.highestBid ?? 0);
       const sellable = !!a?.tradable && !v.soulbound && !keep.has(k);
       if (sellable) sellValue += bid * qty;
-      rows.push(`  ◦ <b>${esc(a?.displayName ?? k)}</b> ×${num(qty)}\n     ${!a?.tradable ? "tidak bisa dijual" : v.soulbound ? "soulbound" : keep.has(k) ? `disimpan (${k === "item.golden_corn" ? "undian WL" : k === "key.world" ? "main World's Eve" : "dipakai bot"})` : `jual ≈ ${num(bid)} VALOR (${usd((bid * qty) / 100)})`}`);
+      rows.push(`  ◦ <b>${esc(a?.displayName ?? FRIENDLY[k] ?? prettyKey(k))}</b> ×${num(qty)}\n     ${!a?.tradable ? (k.startsWith("skin") ? "kosmetik, tidak bisa dijual" : k === "ticket.raffle" ? "otomatis masuk undian" : k === "item.golden_corn" ? "disimpan untuk undian WL" : "tidak bisa dijual di market") : v.soulbound ? "soulbound" : keep.has(k) ? `disimpan (${k === "item.golden_corn" ? "undian WL" : k === "key.world" ? "main World's Eve" : "dipakai bot"})` : `jual ≈ ${num(bid)} VALOR (${usd((bid * qty) / 100)})`}`);
     }
     const nBoxes = Object.values<any>(boxes).reduce((t, b) => t + Number(b?.balance ?? b ?? 0), 0);
     const lines = [header("🎒", "INVENTORY"),
@@ -324,6 +348,44 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       .text("💸 Jual loot sekarang", "a:sellLoot").text("🎁 Tukar worldseed", "a:redeem").row()
       .text("📈 Market", "v:market").text("💰 Wallet", "v:wallet");
     return { text: lines.join("\n"), kb: nav(kb, "v:inv") };
+  }
+
+  /** Every game of chance MoG offers, with the numbers taken from the game client itself. */
+  async function vGamble(): Promise<View> {
+    const st = store.settings();
+    const book = await market.summary().catch(() => new Map());
+    const px = (k: string) => { const a: any = (book as Map<string, any>).get(k); return a?.lowestAsk ? `${num(Number(a.lowestAsk))} VALOR` : "-"; };
+    const lines = [header("🎲", "JUDI & GACHA"),
+      "  <i>Semua angka di bawah diambil dari kode game, bukan perkiraan.</i>",
+      section("🏁 Ringjak Derby (ruangan dalam run)"),
+      row("Cara main", "pilih 1 dari 4 pelari, semua peluangnya sama (25%)"),
+      row("Bayaran", "juara 1 = <b>3×</b> taruhan · juara 2 = <b>0,5×</b>"),
+      row("Batas taruhan", "10% treasure (World's Eve: worldseed)"),
+      row("Hasil rata-rata", "<b>87,5%</b> dari taruhan → bandar ambil 12,5%"),
+      section("🌀 Portal Gambit (ruangan dalam run)"),
+      row("Cara main", "5 baris portal, tiap baris ada 1 portal salah"),
+      row("Bayaran", "lolos kelima baris = <b>3×</b> taruhan"),
+      row("Catatan", "jumlah portal per baris belum terukur; bot mencatatnya saat pertama masuk"),
+      section("🎰 Fortune's Gambit & Treasure Map (Emporium)"),
+      row("Fortune's Gambit", "taruh worldseed, dua kali lipat atau habis"),
+      row("Status", "🔴 dimatikan server untuk akun kita (404)"),
+      section("🐎 Ringjak Racing (lobi, pakai VALOR)"),
+      row("Taruhan", "10–100 VALOR, kelipatan 5"),
+      row("Bayaran", "juara 1 = 3× · juara 2 = 0,8× · hasil rata-rata <b>95%</b>"),
+      row("Status", "ada di server, belum dipakai bot"),
+      section("🎟 Gacha token (dijual, tidak dipakai di MoG)"),
+      row("Bronze / Silver", `${px("gacha.bronze")} / ${px("gacha.silver")}`),
+      row("Gold / Rainbow", `${px("gacha.gold")} / ${px("gacha.rainbow")}`),
+      row("Catatan", "token gacha hanya bisa di-roll di game Onchain Heroes, jadi bot menjualnya"),
+      section("Saklar taruhan bot"),
+      row("Ringjak Derby", on(st.gambleRingRace)), row("Portal Gambit", on(st.gamblePortalGambit)),
+      row("Besar taruhan", `${Math.round((st.gambleWagerPct ?? 0.05) * 100)}% dari treasure/worldseed`),
+      footer("Semua permainan ini rugi dalam jangka panjang. Kalau saklar mati, bot tetap masuk ruangannya tapi bertaruh 0 supaya bisa lewat.")];
+    const kb = new InlineKeyboard()
+      .text(`${check(st.gambleRingRace)} Derby`, "s:gambleRingRace").text(`${check(st.gamblePortalGambit)} Portal Gambit`, "s:gamblePortalGambit").row()
+      .text("➖", "n:gambleWagerPct:-0.01").text(`Taruhan ${Math.round((st.gambleWagerPct ?? 0.05) * 100)}%`, "noop").text("➕", "n:gambleWagerPct:0.01").row()
+      .text("🎒 Inventory", "v:inv").text("📈 Market", "v:market");
+    return { text: lines.join("\n"), kb: nav(kb, "v:gamble") };
   }
 
   async function vKeys(): Promise<View> {
@@ -467,9 +529,17 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       row("Profit terealisasi", `<b>${pnl >= 0 ? "+" : ""}${num(pnl)} VALOR</b> (${pnl >= 0 ? "+" : ""}${usd(pnl / 100)})`),
       row("Belum terealisasi", `${r.unrealized >= 0 ? "+" : ""}${num(r.unrealized)} VALOR`),
       row("Transaksi", `${st.fills} fill · ${days.toFixed(1)} hari · ≈${usd(pnl / 100 / days)}/hari`),
-      section("Posisi & order"),
-      ...(r.lines.length ? r.lines.flatMap((l) => [`  ◦ <b>${esc(l.name)}</b>${l.paused ? " · ⏸ jeda" : ""}`,
-        `     pasar ${num(l.bid)} / ${num(l.ask)} · stok ${l.qty}${l.qty ? ` @${num(l.cost)}` : ""} · order: ${l.orders.length ? esc(l.orders.map((o: string) => o.replace("BUY@", "beli ").replace("SELL@", "jual ")).join(", ")) : "menunggu"}`]) : ["  -"]),
+      row("Modal terpakai", `${num(r.open.filter((o: any) => o.side === "BUY").reduce((t: number, o: any) => t + o.price * o.qty, 0))} VALOR terkunci di order beli`),
+      section("🔴 Barang dijual"),
+      ...(() => { const sells = r.open.filter((o: any) => o.side === "SELL");
+        return sells.length ? sells.map((o: any) => `  ◦ <b>${esc(o.name)}</b> ×${o.qty} @ <b>${num(o.price)}</b>${o.best ? " 🥇" : ` (ask ${num(o.ask)})`}\n     bersih ${num(Math.round(o.net))} VALOR${o.loot ? " · loot run" : o.profit ? ` · untung ${o.profit >= 0 ? "+" : ""}${num(o.profit)}` : ""} · ${o.ageMin} menit`)
+          : ["  (belum ada barang yang dijual — muncul otomatis begitu ada yang terbeli)"]; })(),
+      section("🟢 Order beli"),
+      ...(() => { const buys = r.open.filter((o: any) => o.side === "BUY");
+        return buys.length ? buys.map((o: any) => `  ◦ <b>${esc(o.name)}</b> @ <b>${num(o.price)}</b>${o.best ? " 🥇 tertinggi" : ` (kalah dari ${num(o.bid)})`}\n     target jual ${num(Math.max(0, o.ask - 1))} · ${o.ageMin} menit`)
+          : ["  (tidak ada order beli aktif)"]; })(),
+      section("📦 Stok & pasar"),
+      ...(r.lines.length ? r.lines.map((l) => `  ◦ <b>${esc(l.name)}</b>${l.paused ? " ⏸ jeda" : ""} · pasar ${num(l.bid)}/${num(l.ask)} · stok ${l.qty}${l.qty ? ` @${num(l.cost)}` : ""}`) : ["  -"]),
       section(`Scan item (${st.selectedAt ? ago(st.selectedAt) : "belum"})`),
       pre(["ITEM            EDGE   %  UNIT/HARI  STATUS", ...(st.scores ?? []).slice(0, 9).map((x) => `${shortName(x.name).padEnd(15)}${String(Math.round(x.edge)).padStart(5)} ${String(Math.round(x.edgePct * 100)).padStart(3)} ${String(Math.round(x.unitsPerDay)).padStart(9)}  ${st.selected.includes(x.key) ? "✓ DIPILIH" : x.reason}`)]),
       ...(() => { const p = fundWatch?.plan(); if (!p) return [];
@@ -508,9 +578,9 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
   }
 
   const views: Record<string, () => Promise<View> | View> = {
-    market: vMarket, inv: vInv, menu: vMenu, dash: vDash, run: vRun, wallet: vWallet, keys: vKeys, claims: vClaims, hist: vHist, lb: vLb, set: vSettings, help: vHelp, pass: vPass,
+    market: vMarket, inv: vInv, gamble: vGamble, menu: vMenu, dash: vDash, run: vRun, wallet: vWallet, keys: vKeys, claims: vClaims, hist: vHist, lb: vLb, set: vSettings, help: vHelp, pass: vPass,
   };
-  const loading: Record<string, string> = { inv: "Membaca inventory…", dash: "Memuat dashboard…", wallet: "Cek saldo…", lb: "Memuat leaderboard…", claims: "Memuat…", keys: "Memuat…" };
+  const loading: Record<string, string> = { gamble: "Memuat…", inv: "Membaca inventory…", dash: "Memuat dashboard…", wallet: "Cek saldo…", lb: "Memuat leaderboard…", claims: "Memuat…", keys: "Memuat…" };
 
   // inline navigation
   bot.callbackQuery(/^v:(\w+)$/, async (ctx) => {
@@ -531,7 +601,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
     await edit(ctx, await v(), view);
   });
   // slash commands + bottom keyboard buttons -> new message
-  const cmdMap: Record<string, string> = { inv: "inv", inventory: "inv", market: "market", pass: "pass", menu: "menu", m: "menu", dash: "dash", d: "dash", run: "run", wallet: "wallet", keys: "keys", claims: "claims", history: "hist", lb: "lb", settings: "set", help: "help" };
+  const cmdMap: Record<string, string> = { gamble: "gamble", judi: "gamble", inv: "inv", inventory: "inv", market: "market", pass: "pass", menu: "menu", m: "menu", dash: "dash", d: "dash", run: "run", wallet: "wallet", keys: "keys", claims: "claims", history: "hist", lb: "lb", settings: "set", help: "help" };
   for (const [cmd, view] of Object.entries(cmdMap)) bot.command(cmd, async (ctx) => { try { await send(ctx, await views[view](), view); } catch (e: any) { await ctx.reply(`❌ ${esc(e.message)}`, { parse_mode: "HTML" }); } });
   for (const [view, label] of Object.entries(MENU_BUTTONS)) bot.hears(label, async (ctx) => { try { await send(ctx, await views[view]()); } catch (e: any) { await ctx.reply(`❌ ${esc(e.message)}`, { parse_mode: "HTML" }); } });
   const askNumber = (usage: string) => `✏️ Format: <code>${usage}</code>`;
@@ -567,17 +637,19 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
     const ns = store.patchSettings({ [k]: !st[k] } as Partial<Settings>);
     store.event("info", `setting ${k} -> ${ns[k]}`);
     await ctx.answerCallbackQuery({ text: `${k}: ${ns[k] ? "ON" : "OFF"}` });
-    await edit(ctx, vSettings());
+    const back = k.startsWith("gamble") ? await vGamble() : vSettings();
+    await edit(ctx, back, k.startsWith("gamble") ? "gamble" : "set");
   });
   bot.callbackQuery(/^n:(\w+):(-?[\d.]+)$/, async (ctx) => {
     const k = ctx.match[1] as keyof Settings; const d = Number(ctx.match[2]); const st = store.settings();
-    const limits: Record<string, [number, number]> = { arcadeDailyUsdCap: [0, 100], arcadeKeysPerRun: [1, 100], minPoolEvPerKey: [0.5, 2], worldBuysPerDay: [0, 10] };
+    const limits: Record<string, [number, number]> = { arcadeDailyUsdCap: [0, 100], arcadeKeysPerRun: [1, 100], minPoolEvPerKey: [0.5, 2], worldBuysPerDay: [0, 10], gambleWagerPct: [0.01, 0.1] };
     if (!(k in limits)) return ctx.answerCallbackQuery();
     const [lo, hi] = limits[k]; const v = Math.min(hi, Math.max(lo, Math.round(((st[k] as number) + d) * 100) / 100));
     store.patchSettings({ [k]: v } as Partial<Settings>);
     store.event("info", `setting ${k} -> ${v}`);
     await ctx.answerCallbackQuery({ text: `${k} = ${v}` });
-    await edit(ctx, vSettings());
+    const back2 = k.startsWith("gamble") ? await vGamble() : vSettings();
+    await edit(ctx, back2, k.startsWith("gamble") ? "gamble" : "set");
   });
   bot.callbackQuery("noop", (ctx) => ctx.answerCallbackQuery());
 

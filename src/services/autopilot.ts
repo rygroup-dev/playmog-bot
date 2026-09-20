@@ -291,11 +291,12 @@ export class Autopilot {
     this.running = { runId, runType, startedAt };
     if (resumed) await this.notify(`♻️ Melanjutkan run ${runType} ${runId.slice(-6)}`);
     let summary: RunSummary | null = null;
+    const st = this.store.settings();
     try {
       summary = await playRun(this.api, runId, runType, {
         log: this.log, shouldStop: () => this.stopRequested,
         onTurn: ({ g, reason }) => { if (this.running) Object.assign(this.running, { last: reason, floor: g.currentFloor, energy: g.player.energy, treasure: g.player.treasure }); },
-      }, { ...DEFAULT_POLICY, acceptRooms: this.store.settings().acceptRooms });
+      }, { ...DEFAULT_POLICY, acceptRooms: st.acceptRooms, gambleRingRace: st.gambleRingRace, gamblePortalGambit: st.gamblePortalGambit, gambleWagerPct: st.gambleWagerPct });
       this.store.saveRun(summary, startedAt);
       if (summary.endReason.startsWith("stuck")) {
         const key = `runs.stuck.${runId}`;

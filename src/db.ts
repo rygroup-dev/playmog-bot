@@ -9,11 +9,13 @@ export type Settings = {
   autoWithdraw: boolean; withdrawReserveValor: number;
   autoWorld: boolean; autoRedeemCaches: boolean; autoSellLoot: boolean;
   worldBuysPerDay: number; worldKeyMaxPrice: number; worldUsdcReserve: number; playOwnedArcadeKeys: boolean;
+  gambleRingRace: boolean; gamblePortalGambit: boolean; gambleWagerPct: number; // in-run betting (off by default: house edge)
 };
 export const DEFAULT_SETTINGS: Settings = {
   autoDaily: true, autoUpvote: true, autoExpedition: true, autoArcade: false,
   arcadeKeysPerRun: 1, arcadeDailyUsdCap: 5, minPoolEvPerKey: 1.0,
   expeditionReserveKeys: 0, notifyEveryRun: true, paused: false, acceptRooms: ["shrine", "armory", "jackalot"],
+  gambleRingRace: false, gamblePortalGambit: false, gambleWagerPct: 0.05,
   autoWithdraw: true, withdrawReserveValor: 1000,
   autoWorld: false, autoRedeemCaches: true, autoSellLoot: true,
   worldBuysPerDay: 3, worldKeyMaxPrice: 250, worldUsdcReserve: 3, playOwnedArcadeKeys: true,
