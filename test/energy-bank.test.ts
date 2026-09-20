@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decide } from "../src/game/policy.js";
+import { decide, newMemory } from "../src/game/policy.js";
 import { ENTRY_RESERVE } from "../src/game/value.js";
 
 /**
@@ -54,5 +54,33 @@ describe("energy bank before descending", () => {
     expect(decide(far).reason).not.toContain("treasure");
     const near = state(room, { pickups: [gold(2, 1)] }, { energy: 40 });
     expect(decide(near).reason).toContain("treasure");
+  });
+});
+
+/**
+ * Two brakes added after the first live runs under the bank rule. Farming a floor stops paying:
+ * 176 turns on floor 6 burned 119 energy of walking to collect 92 of orbs, and 136 turns on floor 4
+ * burned 90 to collect 79 — both net losses, while completed runs average ~110 turns per floor.
+ */
+describe("the energy-bank hold has to stop", () => {
+  const wide = ["############", "#@.........#", "#..........#", "#..........#", "#.........S#", "############"];
+  const small = { id: "s", type: "small_energy_orb", x: 6, y: 1, value: 8 };   // 5 steps away: nets only +3
+  const fresh = (pickups: any[]) => decide(state(wide, { pickups }, { energy: 40 })).reason;
+  const spent = (pickups: any[]) =>
+    decide({ ...state(wide, { pickups }, { energy: 40 }), turnNumber: 200 },
+      undefined, { ...newMemory(), floorSince: { floor: 4, turn: 0 } }).reason;
+
+  it("walks past a marginal drop once the floor is spent", () => {
+    // 176 turns on floor 6 burned 119 energy of walking for 92 of orbs: chasing +2 across a room is the leak
+    expect(fresh([small])).toContain("orb");
+    expect(spent([small])).toContain("stairs");
+  });
+
+  it("still takes a rich drop on a spent floor", () => {
+    expect(spent([{ id: "l", type: "large_energy_orb", x: 3, y: 1, value: 17 }])).toContain("orb");
+  });
+
+  it("reports why it left", () => {
+    expect(spent([small])).toContain("habis digarap");
   });
 });

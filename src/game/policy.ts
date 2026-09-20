@@ -14,6 +14,7 @@ export interface PolicyMemory {
   blockedTiles?: Map<number, Set<string>>; // floor -> tiles the server refused to let us walk onto
   badGoals?: Map<number, Set<string>>;     // floor -> goal tiles we never got closer to (unreachable behind a gate, …)
   goalTrack?: { k: string; best: number; tries: number };
+  floorSince?: { floor: number; turn: number }; // when we arrived on the current floor (caps the energy-bank hold)
   teleported?: boolean;             // the game's teleport escape was already used this run
   arrows: Map<number, Set<string>>; // floor -> tiles an arrow trap hit us on (fires on entering its lane: avoid, never "step off" into it)
 }
@@ -262,6 +263,13 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   const bank = ENTRY_RESERVE[floorNow + 1] ?? 0;
   const belowBank = energy < bank;
   let hasEnergyGoal = false;      // set while scoring pickups: is there still energy worth farming here?
+  // Farming a floor has to stop paying eventually. Measured on the first two runs under the bank rule:
+  // 176 turns on floor 6 burned 119 energy of walking to collect 92 of orbs, and 136 turns on floor 4 burned
+  // 90 to collect 79 - both net losses. A completed run averages ~110 turns per floor, so past that the
+  // floor is picked clean and holding the descent only walks the run to death.
+  if (mem.floorSince?.floor !== floorNow) mem.floorSince = { floor: floorNow, turn: g.turnNumber ?? 0 };
+  const turnsHere = (g.turnNumber ?? 0) - (mem.floorSince?.turn ?? 0);
+  const FARM_TURN_CAP = 110;
   const goals: { k: string; score: number; why: string; adjTarget?: any }[] = [];
   const reachAdj = (t: P) => {
     let best: { k: string; d: number } | null = null;
@@ -281,9 +289,9 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
     // energy orbs returned 9,732 for 763. Treasure only pays out at the end of a run, so while the bank for the
     // next floor is short, anything that is not energy has to be on the way (1 step) or it is skipped.
     if (belowBank && !isEnergy && d > 1) continue;
-    // Only an orb that clearly beats its walk justifies holding the descent: measured, 33-41% of all energy lost
-    // is damage taken, so lingering on a picked-clean floor to scrape a marginal orb loses more than it gains.
-    if (isEnergy && pickupValue(p, ctx) > d * 1.5) hasEnergyGoal = true;
+    // Only an orb that clearly profits justifies holding the descent. A 1.5x margin still let the bot cross a
+    // floor for a small orb (8 energy, 5 steps); it has to bank at least 4 net, and the walk itself is unsafe.
+    if (isEnergy && pickupValue(p, ctx) - d >= 4) hasEnergyGoal = true;
     // Walking is paid in energy, and energy is what buys the deeper floors where drops are worth more. A drop must
     // therefore beat its walk by a margin, not merely break even (measured: chasing drops was the single biggest
     // energy sink in every run). Energy orbs are exempt — they pay their own way back.
@@ -338,9 +346,13 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   // but hold the descent while the next floor's measured entry bank is short AND energy is still farmable here —
   // arriving at floor 5 or 10 underfunded is what ended 43 of 45 logged runs.
   if (stairsDist && stairsDist.k !== key(me.x, me.y) && energy > stairsDist.d) {
-    const hold = belowBank && hasEnergyGoal;
-    goals.push({ k: stairsDist.k, score: hold ? -50 : goals.length ? -1 : 1,
-      why: hold ? `stairs ${stairsDist.id} (tunda, nabung ${energy}/${bank})` : `stairs ${stairsDist.id}` });
+    const spent = turnsHere >= FARM_TURN_CAP;
+    const hold = belowBank && hasEnergyGoal && !spent;
+    // Past the cap the floor has to actively outbid the stairs: a +2 orb across the room is what turned
+    // floor 6 into 176 turns and 119 energy of walking, while a genuinely rich drop still wins.
+    goals.push({ k: stairsDist.k, score: hold ? -50 : spent ? 6 : goals.length ? -1 : 1,
+      why: hold ? `stairs ${stairsDist.id} (tunda, nabung ${energy}/${bank})`
+        : spent ? `stairs ${stairsDist.id} (floor habis digarap, ${turnsHere} turn)` : `stairs ${stairsDist.id}` });
   }
   // energy can't be banked: if stairs are out of reach, spend what is left on the best nearby value
   if (!goals.length) {
