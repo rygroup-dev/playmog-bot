@@ -188,8 +188,11 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
           errStreak = Math.max(0, errStreak - 1); // a handled rejection must not count toward the abort limit
         }
       }
-      // the server refused this move: the tile is not walkable for it, so remember it and route around
-      if (e instanceof MoveRejected && dec.action?.type === "move" && typeof dec.action.targetX === "number") {
+      // The server refused this move: the tile is not walkable for it, so remember it and route around.
+      // Transient refusals say nothing about the tile — marking it would permanently cut a route off
+      // (observed live: a RATE_LIMITED reply banned tile 13,10 on floor 3 for the rest of the run).
+      const transient = /RATE_LIMITED|TIMEOUT|TEMPORAR/i.test(String((e as any)?.code ?? ""));
+      if (!transient && e instanceof MoveRejected && dec.action?.type === "move" && typeof dec.action.targetX === "number") {
         const f = g.currentFloor ?? 0;
         mem.blockedTiles ??= new Map();
         if (!mem.blockedTiles.has(f)) mem.blockedTiles.set(f, new Set());
