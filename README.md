@@ -111,6 +111,37 @@ SQLite store ──────┘                           ├─ Game room (C
 
 ## Setup
 
+### One-line install (Linux VPS, Linux desktop, macOS)
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/rygroup-dev/playmog-bot/main/install.sh)
+```
+
+It installs git, a compiler and Node 22 if they are missing (falling back to a per-user nvm install when
+there is no root), clones the repo, installs the packages, then asks you for:
+
+| Question | What it is |
+|---|---|
+| Telegram bot token | From [@BotFather](https://t.me/BotFather): `/newbot`, then copy the token |
+| Telegram user id | Optional. Leave empty and claim the bot later with `/claim` |
+| In-game username | Registered on the first login, 3–20 characters |
+| Wallet: **create** or **import** | `create` generates a fresh wallet; `import` takes an existing private key (hidden input) |
+| systemd service | Linux only: runs the bot on boot and restarts it on failure |
+
+It writes `.env` and `secrets/wallet.json` with mode 600, builds, starts the service and prints the wallet
+address to fund. Re-running it updates an existing install and never overwrites a wallet that is already there.
+
+For an unattended install, set the answers as environment variables first:
+
+```bash
+TELEGRAM_BOT_TOKEN=123:ABC MOG_USERNAME=myname WALLET_MODE=create INSTALL_SERVICE=yes \
+  bash <(curl -fsSL https://raw.githubusercontent.com/rygroup-dev/playmog-bot/main/install.sh)
+```
+
+`INSTALL_DIR`, `TELEGRAM_OWNER_IDS`, `WALLET_PRIVATE_KEY` and `REFERRAL_CODE` work the same way.
+
+### Manual install
+
 ```bash
 git clone https://github.com/rygroup-dev/playmog-bot.git
 cd playmog-bot
