@@ -571,7 +571,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       .text("➖", "m:maxAssets:-1").text(`${c.maxAssets} item`, "noop").text("➕", "m:maxAssets:1")
       .text("➖", "m:maxUnitsPerAsset:-1").text(`${c.maxUnitsPerAsset} unit`, "noop").text("➕", "m:maxUnitsPerAsset:1").row()
       .text("➖", "m:maxLossValor:-100").text(`Batas rugi ${usd(c.maxLossValor / 100, 0)}`, "noop").text("➕", "m:maxLossValor:100").row()
-      .text("💵 Setor modal $15 → VALOR", "c:mmFund").row()
+      .text("💵 Setor $5", "c:valor:5").text("$10", "c:valor:10").text("$25", "c:valor:25").row()
       .text("🛑 Batalkan semua order", "c:mmCancel");
     return { text: lines.join("\n"), kb: nav(kb, "v:market") };
   }
@@ -789,22 +789,6 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
     market.setCfg({ enabled: false });
     await ctx.reply(resultCard("Order dibatalkan", `  ${n} order dibatalkan · market dimatikan\n  Modal tetap ${num(market.cfg().capitalValor)} VALOR — nyalakan lagi lewat ▶️ di menu 📈 Market`), { parse_mode: "HTML" });
   });
-  const pendingFund = new Map<string, number>();
-  bot.callbackQuery("c:mmFund", async (ctx) => {
-    await ctx.answerCallbackQuery(); const id = String(randomInt(1e9)); pendingFund.set(id, Date.now() + 60_000);
-    await edit(ctx, { text: `${header("⚠️", "SETOR MODAL MARKET")}\n${row("Jumlah", "<b>15 USDC.e → 1.500 VALOR</b>")}\n${row("Biaya", "gas saja (deposit VALOR tanpa fee)")}\n${footer("Tarik kembali ke USDC.e: fee 5% + tunggu 24 jam.")}`, kb: new InlineKeyboard().text("✅ Setor", `x:mmFund:${id}`).text("❌ Batal", "v:market") });
-  });
-  bot.callbackQuery(/^x:mmFund:(\d+)$/, async (ctx) => {
-    const exp = pendingFund.get(ctx.match[1]); pendingFund.delete(ctx.match[1]);
-    if (!exp || exp < Date.now()) return ctx.answerCallbackQuery({ text: "Kedaluwarsa, ulangi.", show_alert: true });
-    await ctx.answerCallbackQuery({ text: "Deposit…" });
-    try { const r = await claims.depositValorUsd(15); store.ledger("mm_capital", 15, "market capital deposit", r.hash); cachedSnap = null;
-      const mc = market.cfg(); const cap = mc.capitalValor + 1500; market.setCfg({ capitalValor: cap, maxAssets: cap >= 3000 ? Math.max(3, mc.maxAssets) : mc.maxAssets });
-      const plan = fundWatch?.plan(); if (plan && !plan.doneAt) store.set("fund.plan", { ...plan, doneAt: Date.now(), tx: r.hash });
-      await ctx.reply(resultCard("Modal market masuk", `${row("VALOR sekarang", `<b>${num(r.valor)}</b>`)}\n${row("Modal market", `<b>${num(cap)} VALOR</b>`)}\n${row("Tx", `<code>${r.hash}</code>`)}`), { parse_mode: "HTML" }); }
-    catch (e: any) { await ctx.reply(`❌ ${esc(e.shortMessage ?? e.message)}`, { parse_mode: "HTML" }); }
-  });
-
   const pendingDerby = new Map<string, { stake: number; exp: number }>();
   bot.callbackQuery(/^c:derby:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery(); const stake = Number(ctx.match[1]); const id = String(randomInt(1e9));
@@ -833,7 +817,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
   bot.callbackQuery(/^c:valor:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery(); const usdAmt = Number(ctx.match[1]); const id = String(randomInt(1e9));
     pendingValor.set(id, { usd: usdAmt, exp: Date.now() + 60_000 });
-    await edit(ctx, { text: `${header("⚠️", "SETOR USDC.e → VALOR")}\n${row("Jumlah", `<b>${usdAmt} USDC.e → ${num(usdAmt * 100)} VALOR</b>`)}\n${row("Biaya", "gas saja, tanpa fee")}\n${footer("Tarik balik ke USDC.e: min 500 VALOR, fee 5%, cair 24 jam.")}`,
+    await edit(ctx, { text: `${header("⚠️", "SETOR USDC.e → VALOR")}\n${row("Jumlah", `<b>${usdAmt} USDC.e → ${num(usdAmt * 100)} VALOR</b>`)}\n${row("Saldo wallet", `${(await abs.balances().catch(() => null))?.usdcFmt ?? "?"} USDC.e`)}\n${row("Biaya", "gas saja, tanpa fee")}\n${footer("Modal market diatur lewat tombol ± di 📈 Market. Tarik balik: min 500 VALOR, fee 5%, cair 24 jam.")}`,
       kb: new InlineKeyboard().text("✅ Setor", `x:valor:${id}`).text("❌ Batal", "v:wallet") });
   });
   bot.callbackQuery(/^x:valor:(\d+)$/, async (ctx) => {

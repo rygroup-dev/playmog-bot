@@ -215,6 +215,18 @@ export class MarketMaker {
           await this.notify(`🧠 <b>Market: pilihan item diperbarui</b>\n${s.scores.filter((x) => pick.includes(x.key)).map((x) => `◦ ${x.name}: edge ${Math.round(x.edge)} VALOR (${(x.edgePct * 100).toFixed(0)}%) · ${Math.round(x.unitsPerDay)} unit/hari`).join("\n") || "◦ tidak ada item yang layak saat ini — menunggu"}`);
         }
       }
+      // capital was lowered below what is already tied up: release the most expensive buy orders first
+      {
+        const open = await this.myOrders();
+        let tied = open.filter((o) => o.side === "BUY").reduce((t, o) => t + Number(o.price) * (Number(o.quantity) - Number(o.filledQty ?? 0)), 0)
+          + Object.values(s.pos).reduce((t, p) => t + p.cost * p.qty, 0);
+        for (const o of open.filter((x) => x.side === "BUY").sort((a2, b2) => Number(b2.price) - Number(a2.price))) {
+          if (tied <= cfg.capitalValor) break;
+          await this.cancel(o.id).catch(() => {});
+          tied -= Number(o.price) * (Number(o.quantity) - Number(o.filledQty ?? 0));
+          this.store.event("info", `mm capital lowered: cancelled BUY ${o.assetKey}@${o.price}`);
+        }
+      }
       const active = cfg.autoSelect ? s.selected : cfg.assets;
       const book = await this.summary();
       const orders0 = await this.myOrders();
