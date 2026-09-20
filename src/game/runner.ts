@@ -157,6 +157,16 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
       errStreak++;
       appendFileSync(file, JSON.stringify({ t: Date.now(), error: String(e?.message ?? e), code: e?.code, action: dec.action }) + "\n");
       log(`turn error (${errStreak}): ${e?.message ?? e}`);
+      // the server refused an attack or a break: that target is unusable right now (stale id, wrong direction,
+      // shielded) -> ignore it for a while instead of hammering the same action until the run aborts
+      if (e instanceof MoveRejected && (dec.action?.type === "attack" || dec.action?.type === "break")) {
+        const tid = (dec.action as any).targetEnemyId ?? (dec.action as any).targetId;
+        if (tid) {
+          mem.blacklist.set(String(tid), (g.turnNumber ?? 0) + 20);
+          log(`server refused ${dec.action.type} on ${tid} — ignoring it for 20 turns`);
+          errStreak = Math.max(0, errStreak - 1); // a handled rejection must not count toward the abort limit
+        }
+      }
       // the server refused this move: the tile is not walkable for it, so remember it and route around
       if (e instanceof MoveRejected && dec.action?.type === "move" && typeof dec.action.targetX === "number") {
         const f = g.currentFloor ?? 0;
@@ -171,6 +181,7 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
           pickup: (g.pickups ?? []).filter((p: any) => p.x === tx && p.y === ty).map((p: any) => p.type),
           player: [g.player?.x, g.player?.y], room: g.v2CurrentRoomType } }) + "\n");
         log(`server refused ${tx},${ty} on floor ${f} — marked unwalkable`);
+        errStreak = Math.max(0, errStreak - 1); // handled: routing around it is progress, not a failure
       }
       if (errStreak >= 8) { endReason = `aborted: ${e?.message ?? e}`; break; }
       if (e instanceof MoveRejected && /GAME_OVER|RUN_NOT_ACTIVE|RUN_COMPLETED/i.test(e.code)) { endReason = e.code; break; }
