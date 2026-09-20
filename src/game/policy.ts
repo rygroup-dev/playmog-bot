@@ -415,8 +415,12 @@ export function shrineCost(uses: number) {
 // net loss, and worthless in World's Eve (paid in worldseeds). Apex guard rarely applies: slimes hit us after
 // our first strike, so they are no longer at full HP.
 const TALENT_PRIORITY: Record<string, number> = {
-  armor_plating: 95, divine_shield: 94, swift_steps: 93, renewal: 90, salvage: 86, last_stand: 82, sharp_blade: 80,
-  momentum: 76, vampiric: 70, cleave: 66, scavenger: 60, prospector: 60, critical_strike: 56, merciless: 54,
+  // Re-weighted 2026-09-20 from run logs: walking is 55-60% of all energy spent, so free moves are worth more than
+  // they look (swift_steps, momentum), and salvage was the single largest heal source measured (397 energy across
+  // the logs, ahead of vampiric's 146). Runs that go deep also pick more talents, so the raw "average floor per
+  // talent" numbers are confounded — only mechanically justified changes were applied.
+  swift_steps: 96, armor_plating: 95, divine_shield: 94, salvage: 90, renewal: 88, momentum: 84, last_stand: 82,
+  sharp_blade: 80, vampiric: 70, cleave: 66, scavenger: 60, prospector: 60, critical_strike: 56, merciless: 54,
   frenzy: 52, thorns: 52, poison_blade: 50, scout: 48, disrupt: 46, corruption: 46, survival_instinct: 45, reach: 44,
   menace: 40, apex_guard: 35, apex_hunter: 35, berserker: 25, greed: 8, heavy_hitter: 5, glass_cannon: 3,
 };
