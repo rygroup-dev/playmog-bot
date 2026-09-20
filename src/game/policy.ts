@@ -1,5 +1,5 @@
 import type { Action, RunAction } from "./room.js";
-import { Board, DIRS, dangerMap, dirTo, enemyConfig, footprint, key, manhattan, step, type P } from "./model.js";
+import { Board, DIRS, dangerMap, dirTo, enemyConfig, footprint, isBigBoss, key, manhattan, step, type P } from "./model.js";
 import { chooseItem, ITEM_VALUE } from "./items.js";
 import { breakValue, killCost, killValue, pickupValue, weatherHitCost, type Ctx } from "./value.js";
 import talentTable from "./talents.json" with { type: "json" };
@@ -246,7 +246,14 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
     treasureMult: (g.player.talents ?? []).some((t: any) => (t.id ?? t.talentId ?? t) === "greed") ? 1.2 : 1 };
   const maxE = g.player.maxEnergy ?? 100;
   // energy is also HP: the lower it is, the less damage we accept for a given reward
-  const riskAversion = energy < 20 ? 3 : energy < 35 ? 1.8 : energy < 55 ? 1.2 : 1;
+  let riskAversion = energy < 20 ? 3 : energy < 35 ? 1.8 : energy < 55 ? 1.2 : 1;
+  // Completion budget: floor 10 ends with Sir Jackalot (150 hp). Killing him costs roughly 8 hits and 2-3 of his
+  // swings, i.e. ~60 energy. From floor 8 the bot therefore treats energy below that budget as "low" for anything
+  // optional, so it arrives at the boss with something left instead of spending it on loot two rooms away.
+  const floorNow = g.currentFloor ?? 1;
+  const bossAlive = (g.enemies ?? []).some((e: any) => isBigBoss(e) && (e.hp ?? 0) > 0);
+  const BOSS_BUDGET = 60;
+  if (floorNow >= 8 && energy < BOSS_BUDGET + 25) riskAversion *= 1.6;
   const goals: { k: string; score: number; why: string; adjTarget?: any }[] = [];
   const reachAdj = (t: P) => {
     let best: { k: string; d: number } | null = null;
@@ -259,6 +266,11 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
     if (p.type === "item" && slotsFull) continue;
     const d = dist.get(k); if (d === undefined) continue;
     const ttl = p.v2TurnsUntilDespawn; if (typeof ttl === "number" && d > ttl) continue; // would expire first
+    const isEnergy = !!p.type?.includes("energy_orb");
+    // with the boss up, only energy is worth walking for — treasure can wait until he is down
+    if (bossAlive && !isEnergy && d > 1) continue;
+    // deep floors: a long walk for a small drop is what starves the boss fight (measured: 180 pickup steps on floor 10)
+    if (floorNow >= 8 && !isEnergy && d > 4 && pickupValue(p, ctx) < d * 1.5) continue;
     const net = pickupValue(p, ctx) - d;
     if (net > 0 || (p.type?.includes("energy_orb") && pickupValue(p, ctx) > d)) goals.push({ k, score: net, why: `pickup ${p.type}${p.itemId ? " " + p.itemId : ""} (+${net.toFixed(1)})` });
   }
@@ -277,6 +289,7 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   }
   const bv = breakValue(ctx);
   for (const [, i] of b.breakableAt) {
+    if (bossAlive) break;                                              // boss first: no detours for pots
     const a = reachAdj(i); if (!a) continue;
     const net = bv - a.d;
     if (net > 0 && affordable(a.d)) goals.push({ k: a.k, score: net, why: `goto ${i.type} (+${net.toFixed(1)})`, adjTarget: i });
@@ -296,6 +309,8 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
     }
   }
 
+  // breakables cost nothing to smash but cost energy to walk to: skip the walk while the boss is alive
+  // (handled below by the goal list; adjacent ones are still free)
   // adjacent breakable -> break it now (breaking costs no energy)
   for (const d of DIRS) {
     const n = step(me, d); const i = b.breakableAt.get(key(n.x, n.y));

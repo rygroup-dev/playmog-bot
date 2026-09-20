@@ -242,3 +242,33 @@ describe("dead entities", () => {
     expect(decide(g).action).toMatchObject({ type: "attack", targetEnemyId: "alive" });
   });
 });
+
+describe("completion budget", () => {
+  const room = (floor: number, energy: number, extra: any = {}) => {
+    const g: any = state(["#########", "#@......#", "#.......#", "#########"]);
+    g.currentFloor = floor; g.player.energy = energy; g.player.attackPower = 20;
+    return { ...g, ...extra };
+  };
+  it("ignores distant treasure while the boss is alive", () => {
+    const g = room(10, 80, {
+      enemies: [{ id: "v2_jackalot", x: 7, y: 2, hp: 150, maxHp: 150, damage: 20, spriteType: "v2_jackalot", v2AttackPhase: "idle" }],
+      pickups: [{ id: "t1", x: 6, y: 1, type: "treasure", value: 40 }],
+    });
+    const d = decide(g as any);
+    expect(d.reason).not.toContain("pickup treasure");
+  });
+  it("still walks to an energy orb during the boss fight", () => {
+    const g = room(10, 40, {
+      enemies: [{ id: "v2_jackalot", x: 7, y: 2, hp: 150, maxHp: 150, damage: 20, spriteType: "v2_jackalot", v2AttackPhase: "idle" }],
+      pickups: [{ id: "o1", x: 4, y: 1, type: "large_energy_orb", value: 20 }],
+    });
+    expect(decide(g as any).reason).toContain("energy_orb");
+  });
+  it("prefers the stairs over a far, cheap drop on deep floors", () => {
+    const g = room(9, 70, {
+      pickups: [{ id: "t2", x: 7, y: 2, type: "treasure", value: 8 }],
+      interactive: [{ id: "stairs_exit", type: "stairs", x: 2, y: 2 }],
+    });
+    expect(decide(g as any).reason).toContain("stairs");
+  });
+});
