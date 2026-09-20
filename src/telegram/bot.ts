@@ -295,8 +295,10 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       "  <i>Swap hanya menukar ETH ↔ USDC.e on-chain. USDC.e → VALOR adalah setoran terpisah ke game (1 USDC.e = 100 VALOR, tanpa fee).</i>",
       section("🔗 Wallet penerima hadiah"),
       row("Akun game", `<code>${shortAddr(account.address)}</code> (wallet biasa, bukan AGW)`),
-      row("Linked wallet", link?.linked ? `<code>${shortAddr(link.linked)}</code>` : "belum ada — hadiah masuk ke wallet bot"),
-      "  <i>Link dipakai kalau hadiah (misal WL Yield Fields) mau dikirim ke wallet pribadimu.</i>",
+      row("Linked wallet", link?.linked ? `<code>${shortAddr(link.linked)}</code>` : "tidak ada (tidak diperlukan)"),
+      row("Hadiah masuk ke", `<code>${shortAddr(account.address)}</code> — wallet bot`),
+      "  <i>Fitur link wallet hanya untuk akun Abstract Global Wallet (server: LINK_WALLET_NOT_AGW).",
+      "  Akun ini wallet biasa, jadi hadiah seperti WL Yield Fields langsung ke alamat di atas.</i>",
       section("Cara isi dana"),
       "  1. Kirim ETH ke alamat di atas",
       "     (Arbitrum / Robinhood / Abstract)",
@@ -310,7 +312,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       .text("💵 USDC.e→VALOR $5", "c:valor:5").text("💵 $10", "c:valor:10").text("💵 $25", "c:valor:25").row()
       .text("🌉 Arbitrum → Abstract (semua)", "q:arb_in:all").row()
       .text("🌉 Robinhood → Abstract (semua)", "q:rh_in:all").row()
-      .text(link?.linked ? "🔓 Lepas linked wallet" : "🔗 Link wallet pribadi", link?.linked ? "c:unlink" : "a:linkhow")
+      .text(link?.linked ? "🔓 Lepas linked wallet" : "🔗 Info link wallet", link?.linked ? "c:unlink" : "a:linkhow")
       .text("🔑 Export private key", "c:exportpk");
     return { text: lines.join("\n"), kb: nav(kb, "v:wallet") };
   }
@@ -827,7 +829,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
   const pendingLink = new Map<number, { address: string; message: string; exp: number }>();
   bot.callbackQuery("a:linkhow", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await edit(ctx, { text: `${header("🔗", "LINK WALLET PRIBADI")}\n${row("Gunanya", "hadiah seperti WL Yield Fields dikirim ke wallet pribadimu, bukan wallet bot")}\n${row("Catatan", "wallet bot tidak bisa di-link ke dirinya sendiri (ditolak server)")}\n\n<b>Caranya:</b>\n  1. Kirim <code>/link 0xAlamatWalletKamu</code>\n  2. Bot balas teks pesan yang harus ditandatangani\n  3. Tanda tangani di wallet kamu (MetaMask: Sign Message, atau etherscan.io/verifiedSignatures)\n  4. Kirim <code>/linksig 0xTandaTangan</code>\n${footer("Tanda tangan ini tidak bisa memindahkan dana — hanya menautkan alamat.")}`,
+    await edit(ctx, { text: `${header("🔗", "LINK WALLET — TIDAK DIPERLUKAN")}\n${row("Hasil tes server", "<code>403 LINK_WALLET_NOT_AGW</code>")}\n${row("Artinya", "link wallet hanya untuk akun Abstract Global Wallet (AGW)")}\n${row("Akun ini", "wallet biasa (EOA), jadi hadiah langsung ke wallet bot")}\n\n<i>Banner \"link a non-AGW wallet\" di web game ditujukan untuk pemain AGW: Deed WL mint di Robinhood chain yang tidak didukung AGW. Akun kita tidak terkena masalah itu.</i>\n${footer("Kalau nanti kamu pakai akun AGW: /link 0x… lalu /linksig 0x…")}`,
       kb: nav(new InlineKeyboard(), "v:wallet") });
   });
   bot.command("link", async (ctx) => {
@@ -849,7 +851,12 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       const r = await claims.submitLink(p.address, p.message, sig);
       pendingLink.delete(ctx.chat!.id); cachedSnap = null;
       await ctx.reply(resultCard("Wallet ditautkan", row("Alamat", `<code>${esc(r.address)}</code>`)), { parse_mode: "HTML" });
-    } catch (e: any) { await ctx.reply(`❌ ${esc(e.message)}`, { parse_mode: "HTML" }); }
+    } catch (e: any) {
+      const m = /LINK_WALLET_NOT_AGW/.test(String(e.message)) ? "ℹ️ Server hanya mengizinkan akun Abstract Global Wallet untuk menautkan wallet. Akun ini wallet biasa, jadi hadiah langsung masuk ke wallet bot."
+        : /LINK_WALLET_SELF/.test(String(e.message)) ? "ℹ️ Tidak bisa menautkan wallet ke dirinya sendiri."
+        : `❌ ${esc(e.message)}`;
+      await ctx.reply(m, { parse_mode: "HTML" });
+    }
   });
   bot.callbackQuery("c:unlink", async (ctx) => {
     await ctx.answerCallbackQuery();

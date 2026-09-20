@@ -178,7 +178,7 @@ npm start
 | `/run` | Live run status; start or stop a run |
 | `/inv` | Inventory: worldseeds, keys, tickets, items, what is sellable and for how much |
 | `/wallet` | Balances on three chains, swap, bridge, USDC.e → VALOR, reward-wallet link, private-key export |
-| `/link 0x…` | Link a personal wallet as the reward address (the game refuses linking the account to itself) |
+| `/link 0x…` | Link a reward wallet (AGW accounts only; an EOA account needs no link) |
 | `/keys` | Arcade keys and the live expected value per key |
 | `/claims` | Daily keys, upvote, quests, payouts, jackpot, VALOR withdrawal |
 | `/pass` | Expedition Pass status, renewal, referral code and stats |
@@ -307,9 +307,11 @@ Your own code and its stats are on the **🎫 Pass** page.
 - **Private-key export** lives in the Wallet page behind two confirmations. The message is deleted automatically
   after 60 seconds, but Telegram still keeps it on its servers and on every device signed into that account, so
   export only when you must and store the key offline afterwards.
-- **Reward wallet.** The bot signs in with a plain EOA, so rewards go to the bot wallet by default. `/link 0x…`
-  attaches a personal wallet as the reward address instead: the bot prints the exact message, that wallet signs it,
-  and `/linksig 0x…` submits it. The signature only attaches an address — it cannot move funds.
+- **Reward wallet.** The bot signs in with a plain EOA, so rewards land on the bot wallet. The game's wallet-link
+  feature is for Abstract Global Wallet accounts only — the server answers `403 LINK_WALLET_NOT_AGW` for an EOA
+  account, and `400 LINK_WALLET_SELF` when linking an account to itself (both verified live). The "link a non-AGW
+  wallet" banner in the game is aimed at AGW players, whose whitelist deed mints on Robinhood chain. `/link 0x…`
+  plus `/linksig 0x…` remain available for anyone running the bot on an AGW account.
 - The wallet key never leaves `secrets/wallet.json`. The bot refuses to start if that file is readable by others.
 - `.env`, `secrets/` and `data/` are git-ignored. Never commit them.
 - Every on-chain call is simulated before it is sent, and the sender address is checked against the bot wallet.
