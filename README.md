@@ -4,6 +4,28 @@ Owner-only Telegram autopilot for **Maze of Gains** (playmog.xyz), the dungeon c
 
 The bot plays runs by itself, claims every free reward, runs a small market-making strategy on the in-game marketplace, and reports everything to a Telegram dashboard. Anything that spends money has a cap, and there is a one-tap kill-switch.
 
+**Links**
+
+| | |
+|---|---|
+| Play Maze of Gains | https://playmog.xyz |
+| Onchain Heroes (the main game) | https://play.onchainheroes.xyz |
+| Project site | https://onchainheroes.xyz |
+| Docs and whitepaper | https://docs.onchainheroes.xyz |
+| Abstract explorer (bot wallet, contracts) | https://abscan.org |
+| Abstract portal / bridge | https://portal.abs.xyz |
+| This bot | https://github.com/rygroup-dev/playmog-bot |
+
+**Contracts this bot touches, on Abstract (chain 2741)**
+
+| Contract | Address |
+|---|---|
+| USDC.e | `0x84a71ccd554cc1b02749b35d22f684cc8ec987e1` |
+| Arcade key purchase | `0x3ef14148603202C0225eDFFcFdCcF3E68E5F5E03` |
+| Claim vault (weekly pool, jackpot) | `0x40018Cbb1926dae72DCb315E89AAB7320A191D02` |
+| VALOR vault (deposit, withdraw) | `0x2DDF2129a55cF132E580cc5d69faD1dE3d213BbA` |
+| Upvote (weekly free keys) | `0x3B50dE27506f0a8C1f4122A1e6F470009a76ce2A` |
+
 > **Unofficial.** This project is not affiliated with Onchain Heroes. Automating a game may break its terms of service. Use it at your own risk and only with funds you can afford to lose.
 
 ---
