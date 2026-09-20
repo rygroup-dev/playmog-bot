@@ -21,10 +21,16 @@ function lineEnemies(b: Board, from: P, dir: (typeof DIRS)[number], max = 12) {
   return out;
 }
 
+const isBoss = (e: any) => /jackalot|dragma|boss/.test(String(e?.spriteType ?? e?.id ?? ""));
+
 export function chooseItem(g: any, b: Board, opts: { imminentHere: number; stairsDist: number | null }): ItemDecision | null {
   const slots: any[] = g.player.items?.slots ?? [];
   const me: P = { x: g.player.x, y: g.player.y };
   const atk = g.player.attackPower ?? 10;
+  // Floor 10 ends with Sir Jackalot (150 hp). Damage items are worth far more there than on a slime, so from
+  // floor 9 they are saved for the boss — unless we are about to be hit hard anyway.
+  const boss = (g.enemies ?? []).find((e: any) => isBoss(e) && (e.hp ?? 0) > 0);
+  const saveForBoss = !boss && (g.currentFloor ?? 1) >= 9 && opts.imminentHere < 12;
   for (let i = 0; i < slots.length; i++) {
     const s = slots[i];
     if (!s || s.state !== "unused") continue;
@@ -44,14 +50,24 @@ export function chooseItem(g: any, b: Board, opts: { imminentHere: number; stair
           const meleeHits = Math.ceil(e.hp / Math.max(1, atk));
           score += (kills ? 3 : 1) + (threat ? 2 : 0) + (meleeHits >= 3 ? 2 : 0);
         }
+        if (saveForBoss && !targets.some(isBoss)) continue;          // keep the damage for the final boss
+        if (boss && !targets.some(isBoss)) continue;                   // boss is up: never waste a shot elsewhere
         // only worth a slot when it saves real work: kill a threat, hit 2+, or chunk a tank
         if (score >= 4 && (!best || score > best.score)) best = { d, score, why: `${id} ${d} -> ${targets.map((e) => e.spriteType.replace("v2_", "")).join("+")}` };
       }
       if (best) { const t = step(me, best.d); return { action: { type: "use_item", slotIndex: i, targetX: t.x, targetY: t.y }, reason: best.why }; }
     }
     if (id === "sticky_bomb") {
-      const tgt = (g.enemies ?? []).filter((e: any) => e.hp >= 40 && (e.maxHp ?? 0) > 0 && manhattan(me, e) <= 10 && b.known(e.x, e.y)).sort((a: any, c: any) => c.hp - a.hp)[0];
+      const pool = (g.enemies ?? []).filter((e: any) => e.hp >= 40 && (e.maxHp ?? 0) > 0 && manhattan(me, e) <= 10 && b.known(e.x, e.y));
+      const tgt = boss && pool.some(isBoss) ? pool.find(isBoss) : saveForBoss ? undefined : pool.sort((a: any, c: any) => c.hp - a.hp)[0];
       if (tgt) return { action: { type: "use_item", slotIndex: i, targetX: tgt.x, targetY: tgt.y }, reason: `sticky_bomb -> ${tgt.spriteType} hp${tgt.hp}` };
+    }
+    if (id === "bomb") { // 8-neighbour blast; unused until now, and it is free damage on the boss
+      const near = DIRS.map((d) => step(me, d)).concat([{ x: me.x + 1, y: me.y + 1 }, { x: me.x - 1, y: me.y + 1 }, { x: me.x + 1, y: me.y - 1 }, { x: me.x - 1, y: me.y - 1 }])
+        .map((p) => ({ p, e: b.enemyAt.get(key(p.x, p.y)) })).filter((o) => o.e && (o.e.maxHp ?? 0) > 0);
+      const onBoss = near.find((o) => isBoss(o.e));
+      const pick = onBoss ?? (saveForBoss ? undefined : near.find((o) => o.e.hp >= 25) ?? (near.length >= 2 ? near[0] : undefined));
+      if (pick) return { action: { type: "use_item", slotIndex: i, targetX: pick.p.x, targetY: pick.p.y }, reason: `bomb -> ${pick.e.spriteType.replace("v2_", "")} hp${pick.e.hp}` };
     }
     if (id === "midas_touch") {
       const adj = DIRS.map((d) => b.enemyAt.get(key(step(me, d).x, step(me, d).y))).find((e) => e && e.hp >= 25 && !/jackalot|dragma|boss/.test(e.spriteType));
@@ -83,6 +99,6 @@ export function chooseItem(g: any, b: Board, opts: { imminentHere: number; stair
 /** Relative value used when the slots are full and a new item is offered. */
 export const ITEM_VALUE: Record<string, number> = {
   sticky_bomb: 9, chain_shot: 8, piercing_shot: 8, single_shot: 7, midas_touch: 7, shock_grenade: 6, magnet: 6, gas_pedal: 6,
-  talisman: 4, decoy: 3, chain_hook: 3, switcher: 2, pogo_stick: 2, pocket_portal: 2, escape_rope: 1, bomb: 1,
+  talisman: 4, decoy: 3, chain_hook: 3, switcher: 2, pogo_stick: 2, pocket_portal: 2, escape_rope: 1, bomb: 5,
 };
 export const isThreat = (e: any) => { const c = enemyConfig(e); return !!c && (e.v2AttackPhase === "charge" || e.v2AttackPhase === "preattack"); };

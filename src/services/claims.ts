@@ -157,6 +157,14 @@ export class ClaimsService {
       lanes: ["Merah", "Biru", "Hijau", "Kuning"], raw: r };
   }
 
+  /** Buy Arcade keys with in-game VALOR (100 VALOR per key): no gas, no on-chain step. */
+  async buyKeysWithValor(quantity: number) {
+    const before = Number((await this.api.get("/api/shop/valor/balance")).valorBalance);
+    const r = await this.api.post("/api/keys/purchase-with-valor", { purchaseId: randomUUID(), quantity });
+    const after = Number(r.newValorBalance ?? (await this.api.get("/api/shop/valor/balance")).valorBalance);
+    return { quantity, keys: Number(r.newKeysBalance ?? 0), valorSpent: before - after, valor: after, raw: r };
+  }
+
   /** Deposit USDC.e into VALOR (100 VALOR = 1 USD, no fee) and confirm with the backend. */
   async depositValorUsd(usd: number) {
     const raw = BigInt(Math.round(usd * 1e6));

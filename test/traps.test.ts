@@ -202,3 +202,29 @@ describe("entering gambling rooms", () => {
     expect(d.runAction).toBeUndefined();
   });
 });
+
+describe("boss items", () => {
+  const withItems = (floor: number, items: string[], enemies: any[] = []) => {
+    const g: any = state(["#####", "#.@.#", "#####"]);
+    g.currentFloor = floor; g.player.items = { slots: items.map((itemId) => ({ itemId, state: "unused" })) };
+    g.player.attackPower = 20; g.enemies = enemies;
+    return g;
+  };
+  const slime = (x: number, y: number, hp = 60) => ({ id: `e${x}${y}`, x, y, hp, maxHp: hp, damage: 5, spriteType: "v2_skelesoldier", v2AttackPhase: "idle" });
+  const jack = (x: number, y: number, hp = 150) => ({ id: "v2_jackalot", x, y, hp, maxHp: 150, damage: 20, spriteType: "v2_jackalot", v2AttackPhase: "idle" });
+
+  it("saves shots for the boss from floor 9", () => {
+    const g = withItems(9, ["single_shot"], [slime(3, 1)]);
+    const d = decide(g);
+    expect(d.reason).not.toContain("single_shot");
+  });
+  it("still uses shots on normal floors", () => {
+    const threat = { ...slime(3, 1), v2AttackPhase: "charge", v2AttackTurns: 2, v2AttackDir: "left" };
+    const g = withItems(5, ["single_shot"], [threat]);
+    expect(decide(g).reason).toContain("single_shot");
+  });
+  it("throws the bomb at the boss", () => {
+    const g = withItems(10, ["bomb"], [jack(3, 1)]);
+    expect(decide(g).reason).toContain("bomb -> jackalot");
+  });
+});
