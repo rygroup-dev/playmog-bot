@@ -33,7 +33,8 @@ export class MogApi {
   get address() { return this.account.address; }
   hasSession() { return this.cookies.has("siwe-session"); }
 
-  private async raw(path: string, init: RequestInit = {}) {
+  /** Unauthenticated fetch against the game host (used for the login nonce and the wallet-link nonce). */
+  async raw(path: string, init: RequestInit = {}) {
     const h = new Headers(init.headers);
     h.set("user-agent", UA); h.set("origin", MOG_BASE); h.set("referer", MOG_BASE + "/");
     h.set("X-App-Version", APP_VERSION); h.set("x-mog-version", "v2"); h.set("X-Client-Send-Time", String(Date.now()));

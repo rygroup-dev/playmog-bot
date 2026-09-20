@@ -39,6 +39,7 @@ export const BOT_COMMANDS = [
   { command: "keys", description: "🗝 Arcade & Expedition key" },
   { command: "inv", description: "🎒 Inventory: item, worldseed, key, harga jual" },
   { command: "gamble", description: "🎲 Judi & gacha: peluang, biaya, dan saklar taruhan" },
+  { command: "link", description: "🔗 Link wallet pribadi sebagai penerima hadiah" },
   { command: "swap", description: "⇄ Swap jumlah bebas: /swap eth 12 atau /swap usdc 7" },
   { command: "valor", description: "💵 USDC.e → VALOR jumlah bebas: /valor 12" },
   { command: "withdraw", description: "🏦 VALOR → USDC.e jumlah bebas: /withdraw 800" },
@@ -204,6 +205,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
   async function vDash(): Promise<View> {
     const s = await snap(8_000); const st = store.settings();
     const mm = await market.report().catch(() => null);
+    const dashLink = (await claims.linkStatus().catch(() => null))?.linked ?? null;
     const amber = await api.get("/api/items/amber").then((r) => Number(r.balance ?? 0)).catch(() => 0);
     const mmLine = {
       enabled: mm?.cfg.enabled ?? false, halted: mm?.state.halted ?? null, pnl: Math.round(mm?.state.realized ?? 0), fills: mm?.state.fills ?? 0,
@@ -243,6 +245,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       s.pool ? row("EV pemain top", `${usd(s.pool.usdPerKeyTop)} · bot kita ${s.pool.ownTreasurePerKey ? num(s.pool.ownTreasurePerKey) : "?"} treasure/key`) : "",
       row("Earnings total", `${num(Number(s.earnings?.totalValor ?? 0))} VALOR`),
       s.expRun ? row("Expedition best", `💎 ${num(s.expRun.treasure)} · rank <b>#${s.expRun.rank}</b>`) : "",
+      row("Wallet penerima", dashLink === null ? "wallet bot (belum ada linked wallet)" : `<code>${shortAddr(dashLink)}</code>`),
       section("📈 Market-making"),
       row("Status", mmLine.enabled ? (mmLine.halted ? `🛑 ${esc(mmLine.halted)}` : "🟢 aktif") : "⚫️ mati"),
       row("Profit", `<b>${mmLine.pnl >= 0 ? "+" : ""}${num(mmLine.pnl)} VALOR</b> (${usd(mmLine.pnl / 100)}) · ${mmLine.fills} transaksi`),
@@ -281,6 +284,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
 
   async function vWallet(): Promise<View> {
     const s = await snap(8_000);
+    const link = await claims.linkStatus().catch(() => null);
     const lines = [header("💰", "WALLET & SWAP"),
       `Alamat (sama di semua chain EVM):\n<code>${account.address}</code>`,
       section("Saldo"),
@@ -289,6 +293,10 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       row("VALOR (in-game)", `${num(s.valor)} ≈ ${usd((s.valor ?? 0) / 100)}`),
       "  <i>Jumlah bebas: <code>/swap eth 12</code>, <code>/swap usdc 7</code>, <code>/valor 12</code>, <code>/withdraw 800</code>.</i>",
       "  <i>Swap hanya menukar ETH ↔ USDC.e on-chain. USDC.e → VALOR adalah setoran terpisah ke game (1 USDC.e = 100 VALOR, tanpa fee).</i>",
+      section("🔗 Wallet penerima hadiah"),
+      row("Akun game", `<code>${shortAddr(account.address)}</code> (wallet biasa, bukan AGW)`),
+      row("Linked wallet", link?.linked ? `<code>${shortAddr(link.linked)}</code>` : "belum ada — hadiah masuk ke wallet bot"),
+      "  <i>Link dipakai kalau hadiah (misal WL Yield Fields) mau dikirim ke wallet pribadimu.</i>",
       section("Cara isi dana"),
       "  1. Kirim ETH ke alamat di atas",
       "     (Arbitrum / Robinhood / Abstract)",
@@ -301,7 +309,9 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       .text("⇄ ETH→USDC.e $25", "q:abs_eth_usdc:25").text("⇄ USDC.e→ETH $10", "q:abs_usdc_eth:10").row()
       .text("💵 USDC.e→VALOR $5", "c:valor:5").text("💵 $10", "c:valor:10").text("💵 $25", "c:valor:25").row()
       .text("🌉 Arbitrum → Abstract (semua)", "q:arb_in:all").row()
-      .text("🌉 Robinhood → Abstract (semua)", "q:rh_in:all");
+      .text("🌉 Robinhood → Abstract (semua)", "q:rh_in:all").row()
+      .text(link?.linked ? "🔓 Lepas linked wallet" : "🔗 Link wallet pribadi", link?.linked ? "c:unlink" : "a:linkhow")
+      .text("🔑 Export private key", "c:exportpk");
     return { text: lines.join("\n"), kb: nav(kb, "v:wallet") };
   }
 
@@ -811,6 +821,62 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       const off = /404/.test(String(e.message));
       await ctx.reply(off ? "🔴 Ringjak Racing lobi sedang dimatikan server game (<code>lobbyDerby=false</code>). Taruhan tidak jadi, VALOR tidak terpotong." : `❌ ${esc(e.message)}`, { parse_mode: "HTML" });
     }
+  });
+
+  // link a personal wallet as the reward address: the game refuses a self-link, so the other wallet must sign
+  const pendingLink = new Map<number, { address: string; message: string; exp: number }>();
+  bot.callbackQuery("a:linkhow", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await edit(ctx, { text: `${header("🔗", "LINK WALLET PRIBADI")}\n${row("Gunanya", "hadiah seperti WL Yield Fields dikirim ke wallet pribadimu, bukan wallet bot")}\n${row("Catatan", "wallet bot tidak bisa di-link ke dirinya sendiri (ditolak server)")}\n\n<b>Caranya:</b>\n  1. Kirim <code>/link 0xAlamatWalletKamu</code>\n  2. Bot balas teks pesan yang harus ditandatangani\n  3. Tanda tangani di wallet kamu (MetaMask: Sign Message, atau etherscan.io/verifiedSignatures)\n  4. Kirim <code>/linksig 0xTandaTangan</code>\n${footer("Tanda tangan ini tidak bisa memindahkan dana — hanya menautkan alamat.")}`,
+      kb: nav(new InlineKeyboard(), "v:wallet") });
+  });
+  bot.command("link", async (ctx) => {
+    const addr = (ctx.match ?? "").trim();
+    if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) return ctx.reply("✏️ Format: <code>/link 0xAlamatWalletKamu</code>", { parse_mode: "HTML" });
+    if (addr.toLowerCase() === account.address.toLowerCase()) return ctx.reply("❌ Tidak bisa link wallet bot ke dirinya sendiri (server menolak: LINK_WALLET_SELF).", { parse_mode: "HTML" });
+    try {
+      const message = await claims.linkMessageFor(addr);
+      pendingLink.set(ctx.chat!.id, { address: addr, message, exp: Date.now() + 10 * 60_000 });
+      await ctx.reply(`${header("🔗", "TANDA TANGANI PESAN INI")}\n<pre>${esc(message)}</pre>\n${footer("Lalu kirim: /linksig 0x... (berlaku 10 menit)")}`, { parse_mode: "HTML" });
+    } catch (e: any) { await ctx.reply(`❌ ${esc(e.message)}`, { parse_mode: "HTML" }); }
+  });
+  bot.command("linksig", async (ctx) => {
+    const sig = (ctx.match ?? "").trim();
+    const p = pendingLink.get(ctx.chat!.id);
+    if (!p || p.exp < Date.now()) return ctx.reply("ℹ️ Belum ada permintaan link yang aktif. Mulai dengan <code>/link 0x...</code>", { parse_mode: "HTML" });
+    if (!/^0x[0-9a-fA-F]{100,}$/.test(sig)) return ctx.reply("✏️ Format: <code>/linksig 0x...</code> (tanda tangan hasil Sign Message)", { parse_mode: "HTML" });
+    try {
+      const r = await claims.submitLink(p.address, p.message, sig);
+      pendingLink.delete(ctx.chat!.id); cachedSnap = null;
+      await ctx.reply(resultCard("Wallet ditautkan", row("Alamat", `<code>${esc(r.address)}</code>`)), { parse_mode: "HTML" });
+    } catch (e: any) { await ctx.reply(`❌ ${esc(e.message)}`, { parse_mode: "HTML" }); }
+  });
+  bot.callbackQuery("c:unlink", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await edit(ctx, { text: `${header("⚠️", "LEPAS LINKED WALLET?")}\n${footer("Hadiah kembali diarahkan ke wallet bot.")}`,
+      kb: new InlineKeyboard().text("✅ Lepas", "x:unlink").text("❌ Batal", "v:wallet") });
+  });
+  bot.callbackQuery("x:unlink", async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "Melepas…" });
+    try { await claims.unlinkWallet(); cachedSnap = null; await edit(ctx, await vWallet(), "wallet"); }
+    catch (e: any) { await ctx.reply(`❌ ${esc(e.message)}`, { parse_mode: "HTML" }); }
+  });
+
+  // private key export: owner-only, double confirmation, and the message deletes itself
+  bot.callbackQuery("c:exportpk", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await edit(ctx, { text: `${header("⚠️", "EXPORT PRIVATE KEY")}\n${row("Risiko", "siapa pun yang punya kunci ini bisa menguras wallet")}\n${row("Telegram", "pesan tersimpan di server Telegram & semua perangkat yang login")}\n${row("Pengaman", "pesan otomatis dihapus 60 detik setelah dikirim")}\n${footer("Simpan offline (kertas/password manager), jangan di chat.")}`,
+      kb: new InlineKeyboard().text("🔑 Tampilkan 60 detik", "x:exportpk").text("❌ Batal", "v:wallet") });
+  });
+  bot.callbackQuery("x:exportpk", async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "Mengambil kunci…" });
+    try {
+      const { readFileSync } = await import("node:fs");
+      const w = JSON.parse(readFileSync(process.env.WALLET_PATH ?? "secrets/wallet.json", "utf8"));
+      const m = await ctx.reply(`${header("🔑", "PRIVATE KEY")}\n${row("Alamat", `<code>${esc(w.address)}</code>`)}\n<code>${esc(w.privateKey)}</code>\n\n<i>Pesan ini terhapus dalam 60 detik.</i>`, { parse_mode: "HTML" });
+      store.event("warn", "private key exported to Telegram");
+      setTimeout(() => { ctx.api.deleteMessage(m.chat.id, m.message_id).catch(() => {}); }, 60_000).unref?.();
+    } catch (e: any) { await ctx.reply(`❌ ${esc(e.message)}`, { parse_mode: "HTML" }); }
   });
 
   const pendingValor = new Map<string, { usd: number; exp: number }>();

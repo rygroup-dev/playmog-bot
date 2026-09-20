@@ -157,6 +157,45 @@ export class ClaimsService {
       lanes: ["Merah", "Biru", "Hijau", "Kuning"], raw: r };
   }
 
+  /**
+   * Link this wallet to the game account so claim-style rewards (e.g. the Yield Fields whitelist deed, which mints
+   * on Robinhood chain) have an address to go to. Same SIWE shape the web client uses:
+   * POST /api/wallet/link {address, message, signature}.
+   */
+  async linkStatus() {
+    const r = await this.api.get("/api/wallet/link").catch(() => null);
+    return { account: (r?.accountAddress ?? this.account.address) as string, linked: (r?.linkedWalletAddress ?? null) as string | null, at: r?.linkedWalletAt ?? null };
+  }
+
+  /** The exact SIWE text the other wallet has to sign (the game refuses a self-link, verified live). */
+  async linkMessageFor(address: string) {
+    const account = this.account.address;
+    const nonce = (await this.api.raw("/api/auth/nonce").then((r) => r.text())).trim();
+    const now = new Date(), exp = new Date(Date.now() + 10 * 60_000);
+    return `playmog.xyz wants you to sign in with your Ethereum account:\n${address}\n\n` +
+      `Link this wallet to Maze of Gains account ${account.toLowerCase()}. It attaches an address to that account for claiming; it does not merge accounts and cannot spend from this wallet.\n\n` +
+      `URI: https://playmog.xyz\nVersion: 1\nChain ID: 2741\nNonce: ${nonce}\nIssued At: ${now.toISOString()}\nExpiration Time: ${exp.toISOString()}`;
+  }
+  async submitLink(address: string, message: string, signature: string) {
+    const r = await this.api.post("/api/wallet/link", { address, message, signature });
+    return { address: (r.linkedWalletAddress ?? address) as string, raw: r };
+  }
+  async unlinkWallet() { return this.api.request("/api/wallet/link", { method: "DELETE" }); }
+
+  async linkWallet() {
+    const cur = await this.api.get("/api/wallet/link").catch(() => null);
+    if (cur?.linkedWalletAddress) return { already: true, address: cur.linkedWalletAddress as string };
+    const account = this.account.address;
+    const nonce = (await this.api.raw("/api/auth/nonce").then((r) => r.text())).trim();
+    const now = new Date(), exp = new Date(Date.now() + 10 * 60_000);
+    const message = `playmog.xyz wants you to sign in with your Ethereum account:\n${account}\n\n` +
+      `Link this wallet to Maze of Gains account ${account.toLowerCase()}. It attaches an address to that account for claiming; it does not merge accounts and cannot spend from this wallet.\n\n` +
+      `URI: https://playmog.xyz\nVersion: 1\nChain ID: 2741\nNonce: ${nonce}\nIssued At: ${now.toISOString()}\nExpiration Time: ${exp.toISOString()}`;
+    const signature = await this.account.signMessage({ message });
+    const r = await this.api.post("/api/wallet/link", { address: account, message, signature });
+    return { already: false, address: (r.linkedWalletAddress ?? account) as string, raw: r };
+  }
+
   /** Buy Arcade keys with in-game VALOR (100 VALOR per key): no gas, no on-chain step. */
   async buyKeysWithValor(quantity: number) {
     const before = Number((await this.api.get("/api/shop/valor/balance")).valorBalance);
