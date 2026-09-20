@@ -144,7 +144,8 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
 
   const here = D.get(key(me.x, me.y));
   const traps = trapTiles(g, mem); const arrows = arrowTiles(g, mem);
-  const adj = DIRS.map((d) => ({ d, p: step(me, d) })).map((o) => ({ ...o, e: b.enemyAt.get(key(o.p.x, o.p.y)) })).filter((o) => o.e);
+  // hp<=0 entities linger in the state after a kill: they still block tiles but the server refuses attacks on them
+  const adj = DIRS.map((d) => ({ d, p: step(me, d) })).map((o) => ({ ...o, e: b.enemyAt.get(key(o.p.x, o.p.y)) })).filter((o) => o.e && (o.e.hp ?? 0) > 0);
 
   // 1. an adjacent enemy that dies to this hit is always the best move (removes its threat, free energy)
   const killable = adj.filter((o) => o.e.hp <= atk).sort((a, b2) => threatRank(b2.e) - threatRank(a.e));
@@ -262,6 +263,7 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
     if (net > 0 || (p.type?.includes("energy_orb") && pickupValue(p, ctx) > d)) goals.push({ k, score: net, why: `pickup ${p.type}${p.itemId ? " " + p.itemId : ""} (+${net.toFixed(1)})` });
   }
   for (const e of g.enemies ?? []) {
+    if ((e.hp ?? 0) <= 0) continue;                                   // corpse: not attackable
     if (b.enemyAt.get(key(e.x, e.y)) !== e) continue;
     // big bosses: any tile touching the footprint is a valid attack position
     const f = footprint(e); let a: { k: string; d: number } | null = null;

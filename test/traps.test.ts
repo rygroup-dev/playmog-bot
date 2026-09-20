@@ -228,3 +228,17 @@ describe("boss items", () => {
     expect(decide(g).reason).toContain("bomb -> jackalot");
   });
 });
+
+describe("dead entities", () => {
+  it("never attacks a corpse the server still reports", () => {
+    const g: any = state(["#####", "#.@.#", "#####"]);
+    g.enemies = [{ id: "corpse", x: 3, y: 1, hp: 0, maxHp: 25, spriteType: "v2_mediumslime", v2AttackPhase: "idle" }];
+    const d = decide(g);
+    expect(d.action?.type).not.toBe("attack");
+  });
+  it("still attacks a live enemy beside it", () => {
+    const g: any = state(["#####", "#.@.#", "#####"]);
+    g.enemies = [{ id: "alive", x: 3, y: 1, hp: 5, maxHp: 25, damage: 5, spriteType: "v2_mediumslime", v2AttackPhase: "idle" }];
+    expect(decide(g).action).toMatchObject({ type: "attack", targetEnemyId: "alive" });
+  });
+});
