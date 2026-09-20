@@ -35,6 +35,7 @@ export class Board {
   readonly breakableAt = new Map<string, any>();
   readonly pickupAt = new Map<string, any>();
   readonly stairs: any[] = [];
+  readonly chests: any[] = [];
   constructor(readonly g: any) {
     this.h = g.mapData.length; this.w = g.mapData[0]?.length ?? 0;
     for (const i of g.interactive ?? []) {
@@ -45,10 +46,14 @@ export class Board {
     for (const e of g.enemies ?? []) {
       const f = footprint(e);
       for (let y = f.top; y <= f.bottom; y++) for (let x = f.left; x <= f.right; x++) {
-        if (isInvincible(e)) this.blocked.add(key(x, y)); else this.enemyAt.set(key(x, y), e);
+        this.enemyAt.set(key(x, y), e); // includes invincible/dead entities: avoided normally, passable via the through-enemies fallback
       }
     }
-    for (const p of g.pickups ?? []) this.pickupAt.set(key(p.x, p.y), p);
+    for (const p of g.pickups ?? []) {
+      this.pickupAt.set(key(p.x, p.y), p);
+      // bounty chests (v2Chest) are not walk-on loot: they occupy a 3x3 block and must be hit open
+      if (p.v2Chest) { this.chests.push(p); for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) this.blocked.add(key(p.x + dx, p.y + dy)); }
+    }
   }
   inBounds(x: number, y: number) { return y >= 0 && y < this.h && x >= 0 && x < this.w; }
   /** tile is floor (mapData==0) — ignoring entities */
@@ -135,8 +140,18 @@ function bossThreatTiles(b: Board, e: any, phase: string): Set<string> {
  * (or `preattack`) is `imminent` for the action we are about to take.
  * `exclude` = enemy ids our action will kill (they never fire).
  */
+/** Storm weather: g.v2Weather.strikes marks the tiles lightning hits when our current action resolves (25 damage).
+ *  Verified live 2026-09-20: the marks are in the state BEFORE we act and match that turn's v2_storm_strike event. */
+export const STORM_DAMAGE = 25;
+export function stormTiles(g: any): Set<string> {
+  const w = g?.v2Weather;
+  const marks = typeof w === "object" && w ? w.strikes ?? w.tiles ?? [] : [];
+  return new Set((marks as any[]).filter((m) => typeof m?.x === "number").map((m) => key(m.x, m.y)));
+}
+
 export function dangerMap(b: Board, exclude: Set<string> = new Set()) {
   const all = new Map<string, { dmg: number; imminent: boolean; ids: string[] }>();
+  for (const t of stormTiles(b.g)) all.set(t, { dmg: STORM_DAMAGE, imminent: true, ids: ["storm"] });
   for (const e of b.g.enemies ?? []) {
     if (exclude.has(e.id)) continue;
     const tiles = threatTiles(b, e);

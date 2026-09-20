@@ -308,6 +308,17 @@ export class MarketMaker {
   }
 
   /** Instant buy (fill-or-kill) at the lowest ask if it is within maxPrice. Returns units filled. */
+  /** Cancel every open order through our own bookkeeping, so cancelled orders are never mistaken for fills. */
+  async cancelAll(): Promise<number> {
+    const s = this.state(); this.cur = s;
+    let n = 0;
+    try {
+      for (const o of await this.myOrders()) { try { await this.cancel(o.id); n++; } catch { /* keep going */ } }
+      await this.syncTracked(s, await this.myOrders());
+    } finally { this.save(s); this.cur = null; }
+    return n;
+  }
+
   /** Set when neither instant nor limit buys are accepted; in-memory so it never races the tick's saved state. */
   instantPausedUntil = 0;
   /**

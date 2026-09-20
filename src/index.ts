@@ -28,9 +28,16 @@ const tg = createBot({ token: env.TELEGRAM_BOT_TOKEN, store, api, abs, account, 
 notify = async (t) => { await tg.notifyAll(t); };
 
 tg.ensureClaimCode();
-await tg.setupProfile().catch((e) => log(`setupProfile: ${e.message}`));
+// never block startup on Telegram: menus/commands are cosmetic, the autopilot must run regardless
+void tg.setupProfile().catch((e) => log(`setupProfile: ${e.message}`));
+tg.bot.catch((e) => logger.error({ err: String(e?.message ?? e) }, "telegram update handler"));
 void tg.bot.start({ drop_pending_updates: true, onStart: (i) => log(`telegram @${i.username} online`) });
 autopilot.start(60_000);
+// stall watchdog: if no tick completes for 10 minutes something is wedged (stalled HTTP, dead room) -> restart
+setInterval(() => {
+  const age = Date.now() - autopilot.lastTickAt;
+  if (age > 10 * 60_000) { logger.error({ age }, "autopilot stalled — exiting for systemd restart"); store.event("error", `autopilot stalled ${Math.round(age / 60000)} min — restarting`); process.exit(1); }
+}, 60_000).unref();
 const stopWatchers = startWatchers({ game: gameWatch, fund: fundWatch, market }, log);
 log(`playmog-bot started, wallet ${account.address}`);
 

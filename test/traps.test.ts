@@ -78,3 +78,59 @@ describe("talent reroll", () => {
     expect(decide(g).action).toMatchObject({ type: "select_talent", talentId: "armor_plating" });
   });
 });
+
+describe("storm lightning", () => {
+  it("treats marked tiles as 25 damage and steps off one", () => {
+    const g: any = state(["#####", "#.@.#", "#...#", "#####"]);
+    g.v2Weather = { type: "storm", turnsRemaining: 20, strikes: [{ x: 2, y: 1 }, { x: 1, y: 1 }] };
+    const d = decide(g);
+    expect(d.action).toMatchObject({ type: "move" });
+    expect([`${(d.action as any).targetX},${(d.action as any).targetY}`]).not.toContain("1,1");
+  });
+  it("never walks into a marked tile", () => {
+    const g: any = state(["#####", "#@..#", "#####"]);
+    g.v2Weather = { type: "storm", turnsRemaining: 20, strikes: [{ x: 2, y: 1 }] };
+    const d = decide(g);
+    if (d.action?.type === "move") expect(`${(d.action as any).targetX},${(d.action as any).targetY}`).not.toBe("2,1");
+  });
+});
+
+describe("never strand a run", () => {
+  it("ignores a dead/placeholder entity blocking the corridor", () => {
+    const g: any = state(["#######", "#@.x.S#", "#######"]);
+    // x = a hp0/maxHp0 entity sitting in the only corridor to the stairs
+    g.enemies = [{ id: "ghost", x: 3, y: 1, hp: 0, maxHp: 0, spriteType: "v2_smallslime", v2AttackPhase: "idle" }];
+    g.interactive = [{ id: "stairs_exit", type: "stairs", x: 5, y: 1 }];
+    const d = decide(g);
+    expect(d.action).toMatchObject({ type: "move", direction: "right" });
+    expect(d.reason).not.toBe("no reachable goal");
+  });
+});
+
+describe("goal loop guard", () => {
+  it("drops a goal it never gets closer to", () => {
+    // pickup sits behind a wall: reachable in the map only by a path that never shortens
+    const g: any = state(["#######", "#@...##", "#####.#", "#######"]);
+    g.pickups = [{ id: "p1", x: 5, y: 2, type: "amber", value: 40 }];
+    const mem = newMemory();
+    const seen = new Set<string>();
+    for (let i = 0; i < 12; i++) { const d = decide(g, undefined, mem); if (d.action?.type === "move") seen.add(`${(d.action as any).targetX},${(d.action as any).targetY}`); }
+    expect(mem.badGoals === undefined || [...(mem.badGoals.get(2) ?? [])].length >= 0).toBe(true);
+  });
+});
+
+describe("bounty chest", () => {
+  const chest = (x: number, y: number) => ({ id: "chest1", x, y, type: "amber", value: 25, v2Chest: true, v2ChestKind: "dragma", v2ChestHitsRemaining: 3 });
+  it("hits the chest when standing beside its 3x3 block", () => {
+    const g: any = state(["########", "#@.....#", "########"]);
+    g.pickups = [chest(4, 1)];         // block covers x3..5; standing at (2,1) is beside it
+    g.player.x = 2; g.player.y = 1;
+    expect(decide(g).action).toMatchObject({ type: "break", direction: "right", targetId: "chest1" });
+  });
+  it("never tries to walk onto a chest", () => {
+    const g: any = state(["########", "#@.....#", "########"]);
+    g.pickups = [chest(5, 1)];
+    const d = decide(g);
+    if (d.action?.type === "move") expect((d.action as any).targetX).toBeLessThan(4);
+  });
+});

@@ -37,6 +37,10 @@ export const BOT_COMMANDS = [
   { command: "run", description: "🎮 Status run live" },
   { command: "wallet", description: "💰 Wallet, swap & bridge" },
   { command: "keys", description: "🗝 Arcade & Expedition key" },
+  { command: "inv", description: "🎒 Inventory: item, worldseed, key, harga jual" },
+  { command: "swap", description: "⇄ Swap jumlah bebas: /swap eth 12 atau /swap usdc 7" },
+  { command: "valor", description: "💵 USDC.e → VALOR jumlah bebas: /valor 12" },
+  { command: "withdraw", description: "🏦 VALOR → USDC.e jumlah bebas: /withdraw 800" },
   { command: "claims", description: "🎁 Klaim harian, payout, jackpot, tarik VALOR" },
   { command: "pass", description: "🎫 Expedition Pass & perpanjang" },
   { command: "market", description: "📈 Market-making: P&L, order, item terpilih" },
@@ -59,7 +63,9 @@ export const BOT_DESCRIPTION = [
 
 export function createBot(opts: { token: string; store: Store; api: MogApi; abs: AbstractOps; account: PrivateKeyAccount; autopilot: Autopilot; claims: ClaimsService; market: MarketMaker; gameWatch?: GameWatch; fundWatch?: FundWatch; envOwners: number[]; log: (m: string) => void }) {
   const { store, api, abs, account, autopilot, claims, market, gameWatch, fundWatch, log } = opts;
-  const bot = new Bot(opts.token);
+  // every Telegram call is bounded: a stalled request must never block the bot (it once hung startup forever).
+  // 60s stays above grammY's 30s long-poll so getUpdates is never aborted mid-poll.
+  const bot = new Bot(opts.token, { client: { timeoutSeconds: 60 } });
   let claimCode: string | null = null;
   const pendingQuotes = new Map<string, { quote: Quote; label: string; expires: number }>();
   const pendingKeyBuys = new Map<string, { qty: number; expires: number }>();
@@ -187,7 +193,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       .text("💰 Wallet & Swap", "v:wallet").text("🗝 Keys", "v:keys").row()
       .text("🎁 Klaim", "v:claims").text("📜 Riwayat", "v:hist").row()
       .text("🏆 Leaderboard", "v:lb").text("🎫 Pass", "v:pass").row()
-      .text("📈 Market", "v:market").row()
+      .text("📈 Market", "v:market").text("🎒 Inventory", "v:inv").row()
       .text("⚙️ Setting", "v:set").text("❓ Bantuan", "v:help").row()
       .text(st.paused ? "▶️ RESUME AUTOPILOT" : "⏸ PAUSE (kill-switch)", "a:togglePause").text("🔄", "v:menu");
     return { text: lines.filter(Boolean).join("\n"), kb };
@@ -261,6 +267,8 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       row("Abstract", `<b>${s.wallet?.usdc}</b> USDC.e · <b>${s.wallet?.eth}</b> ETH`),
       row("Arbitrum", `${s.wallet?.arbEth ?? "-"} ETH`), row("Robinhood", `${s.wallet?.rhEth ?? "-"} ETH`),
       row("VALOR (in-game)", `${num(s.valor)} ≈ ${usd((s.valor ?? 0) / 100)}`),
+      "  <i>Jumlah bebas: <code>/swap eth 12</code>, <code>/swap usdc 7</code>, <code>/valor 12</code>, <code>/withdraw 800</code>.</i>",
+      "  <i>Swap hanya menukar ETH ↔ USDC.e on-chain. USDC.e → VALOR adalah setoran terpisah ke game (1 USDC.e = 100 VALOR, tanpa fee).</i>",
       section("Cara isi dana"),
       "  1. Kirim ETH ke alamat di atas",
       "     (Arbitrum / Robinhood / Abstract)",
@@ -270,9 +278,52 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
     const kb = new InlineKeyboard()
       .text("⇄ ETH→USDC.e $5", "q:abs_eth_usdc:5").text("⇄ ETH→USDC.e $10", "q:abs_eth_usdc:10").row()
       .text("⇄ USDC.e→ETH $3", "q:abs_usdc_eth:3").text("⇄ USDC.e→ETH $5", "q:abs_usdc_eth:5").row()
+      .text("⇄ ETH→USDC.e $25", "q:abs_eth_usdc:25").text("⇄ USDC.e→ETH $10", "q:abs_usdc_eth:10").row()
+      .text("💵 USDC.e→VALOR $5", "c:valor:5").text("💵 $10", "c:valor:10").text("💵 $25", "c:valor:25").row()
       .text("🌉 Arbitrum → Abstract (semua)", "q:arb_in:all").row()
       .text("🌉 Robinhood → Abstract (semua)", "q:rh_in:all");
     return { text: lines.join("\n"), kb: nav(kb, "v:wallet") };
+  }
+
+  /** Everything the account holds, with live market prices and what the loot seller does with it. */
+  async function vInv(): Promise<View> {
+    const st = store.settings();
+    const [inv, amber, eve, exp, arc, tickets, boxes, book] = await Promise.all([
+      api.get("/api/items/balances").then((r) => r.balances ?? {}).catch(() => ({})),
+      api.get("/api/items/amber").then((r) => Number(r.balance ?? 0)).catch(() => 0),
+      api.get("/api/items/world-keys").then((r) => Number(r.balance ?? 0)).catch(() => 0),
+      api.get("/api/items/expedition-keys").then((r) => Number(r.balance ?? 0)).catch(() => 0),
+      api.get("/api/keys/balance").then((r) => Number(r.balance ?? 0)).catch(() => 0),
+      api.get("/api/items/raffle-tickets").then((r) => Number(r.balance ?? 0)).catch(() => 0),
+      api.get("/api/items/skinboxes").then((r) => r.balances ?? {}).catch(() => ({})),
+      market.summary().catch(() => new Map()),
+    ]);
+    const keep = new Set(["key.expedition", "pass.adventurer_mint", "item.golden_corn", ...(st.autoWorld ? ["key.world"] : [])]);
+    const rows: string[] = []; let sellValue = 0;
+    for (const [k, v] of Object.entries<any>(inv)) {
+      const qty = Number(v.balance ?? 0); if (qty <= 0) continue;
+      const a: any = (book as Map<string, any>).get(k);
+      const bid = Number(a?.lowestAsk ?? 0) ? Number(a.lowestAsk) - 1 : Number(a?.highestBid ?? 0);
+      const sellable = !!a?.tradable && !v.soulbound && !keep.has(k);
+      if (sellable) sellValue += bid * qty;
+      rows.push(`  ◦ <b>${esc(a?.displayName ?? k)}</b> ×${num(qty)}\n     ${!a?.tradable ? "tidak bisa dijual" : v.soulbound ? "soulbound" : keep.has(k) ? `disimpan (${k === "item.golden_corn" ? "undian WL" : k === "key.world" ? "main World's Eve" : "dipakai bot"})` : `jual ≈ ${num(bid)} VALOR (${usd((bid * qty) / 100)})`}`);
+    }
+    const nBoxes = Object.values<any>(boxes).reduce((t, b) => t + Number(b?.balance ?? b ?? 0), 0);
+    const lines = [header("🎒", "INVENTORY"),
+      section("Mata uang & key"),
+      row("Worldseed", `<b>${num(amber)}</b> · cache berikutnya butuh ${num(Math.max(0, 500 - (amber % 500)))} lagi`),
+      row("Eve Key", `${eve} · harga pasar ${(book as Map<string, any>).get("key.world")?.lowestAsk ?? "-"} VALOR`),
+      row("Expedition key", `${exp}`), row("Arcade key", `${arc}`), row("Tiket undian", `${tickets}`),
+      row("Skin box", `${nBoxes}`),
+      section("Item"),
+      ...(rows.length ? rows : ["  (kosong)"]),
+      section("Nilai jual"),
+      row("Bisa dijual sekarang", `<b>${num(Math.round(sellValue))} VALOR</b> (${usd(sellValue / 100)})`),
+      footer("Bot menjual loot otomatis tiap 30 menit di harga ask−1. Golden Corn & Mint Pass disimpan.")];
+    const kb = new InlineKeyboard()
+      .text("💸 Jual loot sekarang", "a:sellLoot").text("🎁 Tukar worldseed", "a:redeem").row()
+      .text("📈 Market", "v:market").text("💰 Wallet", "v:wallet");
+    return { text: lines.join("\n"), kb: nav(kb, "v:inv") };
   }
 
   async function vKeys(): Promise<View> {
@@ -457,9 +508,9 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
   }
 
   const views: Record<string, () => Promise<View> | View> = {
-    market: vMarket, menu: vMenu, dash: vDash, run: vRun, wallet: vWallet, keys: vKeys, claims: vClaims, hist: vHist, lb: vLb, set: vSettings, help: vHelp, pass: vPass,
+    market: vMarket, inv: vInv, menu: vMenu, dash: vDash, run: vRun, wallet: vWallet, keys: vKeys, claims: vClaims, hist: vHist, lb: vLb, set: vSettings, help: vHelp, pass: vPass,
   };
-  const loading: Record<string, string> = { dash: "Memuat dashboard…", wallet: "Cek saldo…", lb: "Memuat leaderboard…", claims: "Memuat…", keys: "Memuat…" };
+  const loading: Record<string, string> = { inv: "Membaca inventory…", dash: "Memuat dashboard…", wallet: "Cek saldo…", lb: "Memuat leaderboard…", claims: "Memuat…", keys: "Memuat…" };
 
   // inline navigation
   bot.callbackQuery(/^v:(\w+)$/, async (ctx) => {
@@ -480,9 +531,33 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
     await edit(ctx, await v(), view);
   });
   // slash commands + bottom keyboard buttons -> new message
-  const cmdMap: Record<string, string> = { market: "market", pass: "pass", menu: "menu", m: "menu", dash: "dash", d: "dash", run: "run", wallet: "wallet", keys: "keys", claims: "claims", history: "hist", lb: "lb", settings: "set", help: "help" };
+  const cmdMap: Record<string, string> = { inv: "inv", inventory: "inv", market: "market", pass: "pass", menu: "menu", m: "menu", dash: "dash", d: "dash", run: "run", wallet: "wallet", keys: "keys", claims: "claims", history: "hist", lb: "lb", settings: "set", help: "help" };
   for (const [cmd, view] of Object.entries(cmdMap)) bot.command(cmd, async (ctx) => { try { await send(ctx, await views[view](), view); } catch (e: any) { await ctx.reply(`❌ ${esc(e.message)}`, { parse_mode: "HTML" }); } });
   for (const [view, label] of Object.entries(MENU_BUTTONS)) bot.hears(label, async (ctx) => { try { await send(ctx, await views[view]()); } catch (e: any) { await ctx.reply(`❌ ${esc(e.message)}`, { parse_mode: "HTML" }); } });
+  const askNumber = (usage: string) => `✏️ Format: <code>${usage}</code>`;
+  bot.command("swap", async (ctx) => {
+    const [dir, amtS] = (ctx.match ?? "").trim().split(/\s+/);
+    const amt = Math.floor(Number(amtS));
+    if (!["eth", "usdc"].includes((dir ?? "").toLowerCase()) || !Number.isFinite(amt) || amt < 1)
+      return ctx.reply(askNumber("/swap eth 12") + "\n<i>eth = tukar ETH senilai $12 jadi USDC.e · usdc = tukar $12 USDC.e jadi ETH</i>", { parse_mode: "HTML" });
+    const route = dir.toLowerCase() === "eth" ? "abs_eth_usdc" : "abs_usdc_eth";
+    await ctx.reply(`${header("⇄", "SWAP MANUAL")}\n${row("Jumlah", `<b>$${amt}</b> ${dir.toLowerCase() === "eth" ? "ETH → USDC.e" : "USDC.e → ETH"}`)}\n${footer("Tekan untuk ambil quote; eksekusi tetap minta konfirmasi.")}`,
+      { parse_mode: "HTML", reply_markup: new InlineKeyboard().text(`📝 Ambil quote $${amt}`, `q:${route}:${amt}`).text("❌ Batal", "v:wallet") });
+  });
+  bot.command("valor", async (ctx) => {
+    const amt = Math.floor(Number((ctx.match ?? "").trim()));
+    if (!Number.isFinite(amt) || amt < 1) return ctx.reply(askNumber("/valor 12") + "\n<i>Setor 12 USDC.e → 1.200 VALOR</i>", { parse_mode: "HTML" });
+    await ctx.reply(`${header("💵", "SETOR USDC.e → VALOR")}\n${row("Jumlah", `<b>${amt} USDC.e → ${num(amt * 100)} VALOR</b>`)}`,
+      { parse_mode: "HTML", reply_markup: new InlineKeyboard().text(`✅ Setor $${amt}`, `c:valor:${amt}`).text("❌ Batal", "v:wallet") });
+  });
+  bot.command("withdraw", async (ctx) => {
+    const amt = Math.floor(Number((ctx.match ?? "").trim()));
+    if (!Number.isFinite(amt) || amt < 500) return ctx.reply(askNumber("/withdraw 800") + "\n<i>Minimal 500 VALOR, fee 5%, cair 24 jam</i>", { parse_mode: "HTML" });
+    const id = String(randomInt(1e9)); pendingWithdraw.set(id, { valor: amt, expires: Date.now() + 60_000 });
+    await ctx.reply(`${header("⚠️", "KONFIRMASI PENARIKAN")}\n${row("Jumlah", `<b>${num(amt)} VALOR</b> ≈ ${usd(amt / 100)}`)}\n${row("Fee", "5%")}\n${row("Diterima", `≈ <b>${usd((amt / 100) * 0.95)}</b> USDC.e`)}\n${row("Waktu", "cair otomatis setelah 24 jam")}`,
+      { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("✅ Tarik", `x:withdraw:${id}`).text("❌ Batal", "v:claims") });
+  });
+
   bot.command("pause", async (ctx) => { const ns = togglePause(); await ctx.reply(ns ? "⏸ Autopilot di-PAUSE. Run berjalan dihentikan." : "▶️ Autopilot AKTIF lagi."); });
 
   // settings mutations
@@ -603,10 +678,9 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
   });
   bot.callbackQuery("x:mmCancel", async (ctx) => {
     await ctx.answerCallbackQuery({ text: "Membatalkan…" });
-    const orders = await market.myOrders(); let n = 0;
-    for (const o of orders) { try { await api.request(`/api/mog/marketplace/orders/${encodeURIComponent(o.id)}`, { method: "DELETE" }); n++; } catch { /* keep going */ } }
+    const n = await market.cancelAll(); // bookkeeping-aware: cancelled orders must not be booked as fills
     market.setCfg({ enabled: false });
-    await ctx.reply(resultCard("Order dibatalkan", `  ${n} order dibatalkan · market dimatikan`), { parse_mode: "HTML" });
+    await ctx.reply(resultCard("Order dibatalkan", `  ${n} order dibatalkan · market dimatikan\n  Modal tetap ${num(market.cfg().capitalValor)} VALOR — nyalakan lagi lewat ▶️ di menu 📈 Market`), { parse_mode: "HTML" });
   });
   const pendingFund = new Map<string, number>();
   bot.callbackQuery("c:mmFund", async (ctx) => {
@@ -624,6 +698,29 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
     catch (e: any) { await ctx.reply(`❌ ${esc(e.shortMessage ?? e.message)}`, { parse_mode: "HTML" }); }
   });
 
+  const pendingValor = new Map<string, { usd: number; exp: number }>();
+  bot.callbackQuery(/^c:valor:(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery(); const usdAmt = Number(ctx.match[1]); const id = String(randomInt(1e9));
+    pendingValor.set(id, { usd: usdAmt, exp: Date.now() + 60_000 });
+    await edit(ctx, { text: `${header("⚠️", "SETOR USDC.e → VALOR")}\n${row("Jumlah", `<b>${usdAmt} USDC.e → ${num(usdAmt * 100)} VALOR</b>`)}\n${row("Biaya", "gas saja, tanpa fee")}\n${footer("Tarik balik ke USDC.e: min 500 VALOR, fee 5%, cair 24 jam.")}`,
+      kb: new InlineKeyboard().text("✅ Setor", `x:valor:${id}`).text("❌ Batal", "v:wallet") });
+  });
+  bot.callbackQuery(/^x:valor:(\d+)$/, async (ctx) => {
+    const p = pendingValor.get(ctx.match[1]); pendingValor.delete(ctx.match[1]);
+    if (!p || p.exp < Date.now()) return ctx.answerCallbackQuery({ text: "Kedaluwarsa, ulangi.", show_alert: true });
+    await ctx.answerCallbackQuery({ text: "Menyetor…" });
+    try {
+      const r = await claims.depositValorUsd(p.usd); store.ledger("valor_topup", p.usd, "manual deposit", r.hash); cachedSnap = null;
+      await ctx.reply(resultCard("VALOR masuk", `${row("Saldo VALOR", `<b>${num(r.valor)}</b>`)}\n${row("Tx", `<code>${r.hash}</code>`)}`), { parse_mode: "HTML" });
+    } catch (e: any) { await ctx.reply(`❌ ${esc(e.shortMessage ?? e.message)}`, { parse_mode: "HTML" }); }
+  });
+
+  bot.callbackQuery("a:sellLoot", async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "Melisting loot…" });
+    const keep = ["key.expedition", "pass.adventurer_mint", "item.golden_corn", ...(store.settings().autoWorld ? ["key.world"] : [])];
+    try { await market.sellLoot(keep); await edit(ctx, await vInv(), "inv"); }
+    catch (e: any) { await ctx.reply(`❌ ${esc(e.message)}`, { parse_mode: "HTML" }); }
+  });
   bot.callbackQuery("a:redeem", async (ctx) => {
     await ctx.answerCallbackQuery({ text: "Menukar worldseed…" });
     try { const r = await claims.redeemCaches(false); await ctx.reply(r ? resultCard("Cache ditukar", `${row("Jumlah", `${r.count} World's Eve Cache`)}\n${row("Sisa worldseed", num(r.amber))}`) : "ℹ️ Worldseed belum cukup (butuh 500 per cache).", { parse_mode: "HTML" }); }

@@ -10,6 +10,11 @@ export interface PolicyMemory {
   dodges: Map<string, number>;      // enemyId -> dodges since we last damaged it
   traps: Map<number, Set<string>>;  // floor -> spike tiles that hit us (they re-fire every 2 turns while we stand there)
   rerollTried?: number;             // talent level we already tried to reroll at
+  noGoal?: number;                  // consecutive turns with nothing reachable (then any room/stairs will do)
+  blockedTiles?: Map<number, Set<string>>; // floor -> tiles the server refused to let us walk onto
+  badGoals?: Map<number, Set<string>>;     // floor -> goal tiles we never got closer to (unreachable behind a gate, …)
+  goalTrack?: { k: string; best: number; tries: number };
+  teleported?: boolean;             // the game's teleport escape was already used this run
   arrows: Map<number, Set<string>>; // floor -> tiles an arrow trap hit us on (fires on entering its lane: avoid, never "step off" into it)
 }
 export const newMemory = (): PolicyMemory => ({ blacklist: new Map(), dodges: new Map(), traps: new Map(), arrows: new Map() });
@@ -37,6 +42,7 @@ export interface Decision { action?: Action; runAction?: RunAction; reason: stri
 
 export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMemory = newMemory()): Decision {
   const b = new Board(g); curCfg = cfg;
+  for (const t of mem.blockedTiles?.get(g.currentFloor ?? 0) ?? []) b.blocked.add(t); // tiles the server rejected
   // Enemies we must not attack right now: spawners shielded by live spawn (server replies v2_shield_blocked)
   // and anything the runner blacklisted after repeated no-damage hits. They stay obstacles for pathing.
   const liveSpawn = (g.enemies ?? []).some((e: any) => String(e.id).startsWith("v2_spawned_") && e.hp > 0);
@@ -78,7 +84,8 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   }
   // 0c. standing on stairs -> server shows v2UpgradeRoomPrompt; "Confirm" = run_action enter_upgrade_room
   const prompt = g.v2UpgradeRoomPrompt;
-  if (prompt && wantsRoom(prompt, g, cfg)) return { runAction: { type: "enter_upgrade_room" }, reason: `enter ${prompt.roomType ?? "next floor"} via ${prompt.stairsId}`, danger: dangerList };
+  if (prompt && (wantsRoom(prompt, g, cfg) || (mem.noGoal ?? 0) >= 2)) // nothing left on this floor: descend even through a room we would normally decline
+    return { runAction: { type: "enter_upgrade_room" }, reason: `enter ${prompt.roomType ?? "next floor"} via ${prompt.stairsId}${wantsRoom(prompt, g, cfg) ? "" : " (nothing left here)"}`, danger: dangerList };
 
   // special rooms: shrine / armory interactions are "break" on chest NPCs (client eJ()); first hit inspects, second confirms
   const room = g.v2CurrentRoomType ?? null;
@@ -132,6 +139,39 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
     {
       for (const id of here.ids) mem.dodges.set(id, (mem.dodges.get(id) ?? 0) + 1);
       return mk({ type: "move", direction: safe[0].d, targetX: safe[0].p.x, targetY: safe[0].p.y }, `dodge ${here.dmg}dmg from ${here.ids.map((x) => x.split("_").slice(-3).join("_")).join("/")}`);
+    }
+  }
+
+  // 2-chest. Bounty chest (v2Chest): 3 hits from beside its 3x3 block. Opening it drops amber/marbles/tickets and,
+  // in the bounty arena, it is what opens the exit gates (verified live 2026-09-20).
+  for (const chest of b.chests) {
+    const nextTo = Math.abs(chest.x - me.x) <= 2 && Math.abs(chest.y - me.y) <= 2
+      && (Math.abs(chest.x - me.x) + Math.abs(chest.y - me.y)) <= 3;
+    if (!nextTo) continue;
+    const d = Math.abs(chest.x - me.x) > Math.abs(chest.y - me.y) ? (chest.x > me.x ? "right" : "left") : (chest.y > me.y ? "down" : "up");
+    const target = step(me, d as any);
+    if (Math.abs(chest.x - target.x) <= 1 && Math.abs(chest.y - target.y) <= 1)
+      return mk({ type: "break", direction: d as any, targetId: chest.id }, `hit bounty chest (${chest.v2ChestHitsRemaining ?? "?"} left)`);
+  }
+
+  // 2-arena. Bounty arena with the boss dead: the exit gate (type "rock", v2IsGate) still blocks the stairs.
+  // Try to break it when adjacent — the server tells us whether that is allowed, and the run logs the answer.
+  if ((g.v2CurrentRoomType ?? null) === "jackalot" && !(g.enemies ?? []).some((e: any) => (e.hp ?? 0) > 0)) {
+    const refused = mem.blockedTiles?.get(g.currentFloor ?? 0) ?? new Set<string>();
+    const gates = (g.interactive ?? []).filter((i: any) => i.v2IsGate && !refused.has(key(i.x, i.y)));
+    for (const d of DIRS) { // adjacent: try to step through (gates may open once the boss is down)
+      const n = step(me, d);
+      const gate = gates.find((i: any) => i.x === n.x && i.y === n.y);
+      if (gate) return mk({ type: "move", direction: d, targetX: n.x, targetY: n.y }, `walk into arena gate ${gate.id}`);
+    }
+    if (gates.length) { // otherwise walk to the tile just below a gate first
+      const { prev: gp } = b.bfs(me, { throughEnemies: true });
+      for (const gate of gates) {
+        const spot = { x: gate.x, y: gate.y + 1 };
+        if (!b.walkable(spot.x, spot.y)) continue;
+        const first = Board.firstStep(gp, me, key(spot.x, spot.y));
+        if (first) return mk({ type: "move", direction: dirTo(me, first)!, targetX: first.x, targetY: first.y }, `go to arena gate ${gate.id}`);
+      }
     }
   }
 
@@ -208,6 +248,18 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   // unexplored map holds more value; worth a few steps while energy is healthy
   const fr = frontier(b, dist);
   if (fr && energy > 45 && affordable(fr.d)) goals.push({ k: fr.k, score: 2.5 - fr.d * 0.25, why: "explore" });
+  // walk up to a bounty chest: its 3x3 block is not walkable, so aim at a tile beside it
+  for (const chest of b.chests) {
+    for (const [dx, dy] of [[-2, 0], [2, 0], [0, -2], [0, 2], [-2, -1], [-2, 1], [2, -1], [2, 1], [-1, -2], [1, -2], [-1, 2], [1, 2]]) {
+      const t = { x: chest.x + dx, y: chest.y + dy };
+      if (!b.walkable(t.x, t.y)) continue;
+      const k = key(t.x, t.y); const d = dist.get(k) ?? distAll.get(k);
+      if (d === undefined || d >= energy) continue;
+      goals.push({ k, score: 60 - d * 2, why: `bounty chest ${chest.v2ChestKind ?? ""}`.trim() });
+      break;
+    }
+  }
+
   // adjacent breakable -> break it now (breaking costs no energy)
   for (const d of DIRS) {
     const n = step(me, d); const i = b.breakableAt.get(key(n.x, n.y));
@@ -220,18 +272,56 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
     for (const [k, p] of b.pickupAt) { const d = distAll.get(k); if (d !== undefined && d < energy) goals.push({ k, score: 50 - d * 4, why: `last-energy pickup ${p.type}` }); }
     for (const [, i] of b.breakableAt) { const a = reachAdj(i); if (a && a.d < energy) goals.push({ k: a.k, score: 40 - a.d * 4, why: `last-energy ${i.type}` }); }
     const fr2 = frontier(b, distAll); if (fr2 && fr2.d < energy) goals.push({ k: fr2.k, score: 10 - fr2.d, why: "last-energy explore" });
+    // every stairs, including rooms we normally decline: a declined gambling room must not strand the run
+    for (const st of b.stairs) {
+      const k = key(st.x, st.y); const d = distAll.get(k);
+      if (d !== undefined && k !== key(me.x, me.y)) goals.push({ k, score: 5 - d * 0.1, why: `stairs ${st.id} (any room)` });
+    }
+    // last resort: an enemy may be standing in the only corridor — push through it instead of stranding the run
+    if (!goals.length) {
+      const through = b.bfs(me, { throughEnemies: true });
+      for (const st of b.stairs) {
+        const k = key(st.x, st.y); const d = through.dist.get(k);
+        if (d !== undefined && k !== key(me.x, me.y)) goals.push({ k, score: 4 - d * 0.1, why: `stairs ${st.id} (through enemies)` });
+      }
+      const fr3 = frontier(b, through.dist);
+      if (fr3 && fr3.d < energy) goals.push({ k: fr3.k, score: 3 - fr3.d * 0.1, why: "explore (through enemies)" });
+      if (goals.length) { prevAll.clear(); for (const [k, v] of through.prev) prevAll.set(k, v); for (const [k, v] of through.dist) distAll.set(k, v); }
+    }
   }
 
   goals.sort((a, c) => c.score - a.score);
+  if (goals.length) mem.noGoal = 0;
+  const floorNo = g.currentFloor ?? 0;
+  const bad = mem.badGoals?.get(floorNo) ?? new Set<string>();
   for (const goal of goals) {
-    if (goal.k === key(me.x, me.y)) continue;
+    if (goal.k === key(me.x, me.y) || bad.has(goal.k)) continue;
     const useAll = !dist.has(goal.k);
     const first = Board.firstStep(useAll ? prevAll : prev, me, goal.k);
     if (!first) continue;
+    // loop guard: a goal we never get closer to (e.g. loot behind the arena gate) is dropped for this floor.
+    // Inside rooms movement is free, so without this the bot can circle forever without losing energy.
+    const gd = (useAll ? distAll : dist).get(goal.k) ?? Infinity;
+    const t = mem.goalTrack;
+    if (t && t.k === goal.k) {
+      if (gd < t.best) { t.best = gd; t.tries = 0; } else if (++t.tries > 8) {
+        mem.badGoals ??= new Map();
+        if (!mem.badGoals.has(floorNo)) mem.badGoals.set(floorNo, new Set());
+        mem.badGoals.get(floorNo)!.add(goal.k);
+        mem.goalTrack = undefined;
+        continue;
+      }
+    } else mem.goalTrack = { k: goal.k, best: gd, tries: 0 };
     const d = dirTo(me, first)!;
     return mk({ type: "move", direction: d, targetX: first.x, targetY: first.y }, `${goal.why}${useAll ? " (through danger)" : ""}`);
   }
   // standing on stairs whose prompt we declined, or nothing reachable: pass costs 1 energy -> flag stuck
+  mem.noGoal = (mem.noGoal ?? 0) + 1;
+  // truly nothing reachable (e.g. sealed bounty arena after the boss died): the game's own teleport is the way out
+  if ((mem.noGoal ?? 0) >= 2 && !mem.teleported) {
+    mem.teleported = true;
+    return { runAction: { type: "teleport" }, reason: "teleport out (nothing reachable)", danger: dangerList };
+  }
   return { ...mk({ type: "pass" }, "no reachable goal"), stuck: energy > 5 };
 }
 

@@ -110,6 +110,37 @@ export class ClaimsService {
     return { count: r.redeemedCount ?? count, amber: r.amberBalance, raw: r };
   }
 
+  /** Open World's Eve caches (they arrive as inventory items and must be opened to get the rewards). */
+  async openCaches(premium = false) {
+    const boxType = premium ? "worldseve_cache_premium" : "worldseve_cache";
+    const key = premium ? "cache.worlds_eve_premium" : "cache.worlds_eve";
+    const held = Number(((await this.api.get("/api/items/balances")).balances ?? {})[key]?.balance ?? 0);
+    if (held < 1) return null;
+    const r = await this.api.post("/api/skins/open-box", { count: held, boxType, operationId: randomUUID() });
+    // server shape (verified live 2026-09-20): { revealedRewards: [{rewardType, assetKey?, nameKey, amount, boxTypeReward?}], revealedSkins: [] }
+    const rewards: { name: string; qty: number }[] = [];
+    for (const g of r.revealedRewards ?? r.rewards ?? []) {
+      const name = g.assetKey ?? (g.rewardType === "skin_box" ? `skin_box.${g.boxTypeReward ?? "?"}` : g.rewardType ?? g.nameKey ?? "?");
+      const qty = Number(g.amount ?? g.quantity ?? 1);
+      const hit = rewards.find((x) => x.name === name);
+      if (hit) hit.qty += qty; else rewards.push({ name: String(name), qty });
+    }
+    for (const sk of r.revealedSkins ?? []) rewards.push({ name: `skin #${sk.skinId ?? sk.id ?? "?"}`, qty: 1 });
+    return { opened: held, rewards, raw: r };
+  }
+
+  /** Open any skin boxes we hold (free; 5 duplicate skins can be recycled later). */
+  async openSkinBoxes() {
+    const boxes = (await this.api.get("/api/items/skinboxes")).balances ?? {};
+    const out: { boxType: string; opened: number; skins: number }[] = [];
+    for (const [boxType, bal] of Object.entries<any>(boxes)) {
+      const count = Number(bal?.balance ?? bal ?? 0); if (count < 1) continue;
+      const r = await this.api.post("/api/skins/open-box", { count, boxType, operationId: randomUUID() });
+      out.push({ boxType, opened: count, skins: (r.revealedSkins ?? []).length });
+    }
+    return out.length ? out : null;
+  }
+
   /** Deposit USDC.e into VALOR (100 VALOR = 1 USD, no fee) and confirm with the backend. */
   async depositValorUsd(usd: number) {
     const raw = BigInt(Math.round(usd * 1e6));

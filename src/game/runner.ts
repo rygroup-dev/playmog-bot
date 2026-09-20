@@ -37,6 +37,42 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
     const dec = decide(g, cfg, mem);
     const before = g;
     stuckStreak = dec.stuck ? stuckStreak + 1 : 0;
+    if (dec.stuck && stuckStreak === 1) { // one-off snapshot so a stranded floor can be diagnosed afterwards
+      const stairs = (g.interactive ?? []).filter((i: any) => i.type === "stairs").map((i: any) => ({ id: i.id, x: i.x, y: i.y, room: i.v2RoomType, gate: !!i.v2IsGate }));
+      appendFileSync(file, JSON.stringify({ t: Date.now(), turn: g.turnNumber, floor: g.currentFloor, stuckDump: {
+        pos: [g.player.x, g.player.y], energy: g.player.energy, room: g.v2CurrentRoomType, prompt: g.v2UpgradeRoomPrompt ?? null,
+        arena: { roomType: g.v2CurrentRoomType, liveEnemies: (g.enemies ?? []).filter((e: any) => (e.hp ?? 0) > 0).map((e: any) => [e.id, e.x, e.y, e.hp]),
+                 refusedTiles: [...(mem.blockedTiles?.get(g.currentFloor ?? 0) ?? [])], bountyPending: g.v2BountyEntryPending, decoy: g.v2Decoy,
+                 pickups: (g.pickups ?? []).map((p: any) => [p.type, p.x, p.y]) },
+        kills: g.v2FloorKills, killTarget: g.v2FloorKillTarget, stairs,
+        gates: (g.interactive ?? []).filter((i: any) => i.v2IsGate),
+        interactive: (g.interactive ?? []).map((i: any) => ({ id: i.id, t: i.type, x: i.x, y: i.y, hp: i.hp, maxHp: i.maxHp, npc: i.v2NpcType, armory: i.v2ArmoryItemId, gate: i.v2IsGate })),
+        enemies: (g.enemies ?? []).map((e: any) => [e.id, e.x, e.y, e.hp, e.maxHp]), pickups: (g.pickups ?? []).length,
+        breakables: (g.interactive ?? []).filter((i: any) => i.type === "pot" || i.type === "crate").length,
+        portals: (g.portals ?? []).map((p: any) => [p.id, p.x, p.y]), unknownTiles: (g.fogMask ?? []).flat().filter((v: number) => !v).length,
+        // ascii map around us: # wall, . floor, ' ' void, @ us, S stairs, G gate, o interactive
+        map: (() => {
+          const out: string[] = []; const px = g.player.x, py = g.player.y;
+          for (let y = py - 8; y <= py + 8; y++) {
+            let line = "";
+            for (let x = px - 12; x <= px + 12; x++) {
+              const m = g.mapData?.[y]?.[x];
+              const i = (g.interactive ?? []).find((q: any) => q.x === x && q.y === y);
+              line += (x === px && y === py) ? "@" : i?.type === "stairs" ? "S" : i?.v2IsGate ? "G" : i ? "o" : m === 0 ? "." : m === 1 ? "#" : " ";
+            }
+            out.push(`${String(y).padStart(3)}|${line}`);
+          }
+          return out;
+        })() } }) + "\n");
+    }
+    if (stuckStreak === 2 && !mem.teleported) { // the game's own escape hatch before giving up (sealed room, blocked corridor)
+      mem.teleported = true;
+      try {
+        const ack = await room.runAction({ type: "teleport" });
+        appendFileSync(file, JSON.stringify({ t: Date.now(), turn: g.turnNumber, runAction: { type: "teleport" }, reason: "escape: nothing reachable", ack: { ...ack, gameState: undefined } }) + "\n");
+        log("teleport escape used"); g = room.state; stuckStreak = 0; continue;
+      } catch (e: any) { log(`teleport escape failed: ${e?.message ?? e}`); }
+    }
     if (stuckStreak > 2) { endReason = "stuck: no safe action (run left open, not drained)"; break; }
     try {
       if (dec.runAction) {
@@ -76,6 +112,11 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
           const k = ev.pickupType ?? ev.itemType ?? ev.type; loot[k] = (loot[k] ?? 0) + Number(ev.amount ?? ev.value ?? 1);
         }
       }
+      // storm weather costs 25 energy per lightning strike; dump the raw server state so we can find how the
+      // incoming strike is telegraphed (the field is not in any client chunk we can download)
+      if (String(before.v2Weather ?? "").includes("storm") || String((before.v2Weather as any)?.type ?? "").includes("storm")) {
+        try { mkdirSync("data/storm", { recursive: true }); appendFileSync(`data/storm/${runId}.jsonl`, JSON.stringify({ turn: before.turnNumber, pos: [before.player.x, before.player.y], state: before }) + "\n"); } catch { /* probe only */ }
+      }
       appendFileSync(file, JSON.stringify({ t: Date.now(), turn: before.turnNumber, floor: before.currentFloor, pos: [before.player.x, before.player.y], energy: before.player.energy,
         action: dec.action, reason: dec.reason, danger: dec.danger, events: r.events, rtt: Math.round(r.rttMs), sp: r.serverProcessMs,
         talents: before.player.pendingTalentRolls?.length ? before.player.pendingTalentRolls : undefined, prompt: before.v2UpgradeRoomPrompt ?? undefined,
@@ -87,6 +128,21 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
       errStreak++;
       appendFileSync(file, JSON.stringify({ t: Date.now(), error: String(e?.message ?? e), code: e?.code, action: dec.action }) + "\n");
       log(`turn error (${errStreak}): ${e?.message ?? e}`);
+      // the server refused this move: the tile is not walkable for it, so remember it and route around
+      if (e instanceof MoveRejected && dec.action?.type === "move" && typeof dec.action.targetX === "number") {
+        const f = g.currentFloor ?? 0;
+        mem.blockedTiles ??= new Map();
+        if (!mem.blockedTiles.has(f)) mem.blockedTiles.set(f, new Set());
+        mem.blockedTiles.get(f)!.add(`${dec.action.targetX},${dec.action.targetY}`);
+        const tx = dec.action.targetX, ty = dec.action.targetY;
+        appendFileSync(file, JSON.stringify({ t: Date.now(), refused: [tx, ty], floor: f, why: {
+          map: g.mapData?.[ty]?.[tx], fog: g.fogMask?.[ty]?.[tx],
+          interactive: (g.interactive ?? []).filter((i: any) => i.x === tx && i.y === ty),
+          enemy: (g.enemies ?? []).filter((e: any) => e.x === tx && e.y === ty).map((e: any) => [e.id, e.hp, e.maxHp, e.spriteType]),
+          pickup: (g.pickups ?? []).filter((p: any) => p.x === tx && p.y === ty).map((p: any) => p.type),
+          player: [g.player?.x, g.player?.y], room: g.v2CurrentRoomType } }) + "\n");
+        log(`server refused ${tx},${ty} on floor ${f} — marked unwalkable`);
+      }
       if (errStreak >= 8) { endReason = `aborted: ${e?.message ?? e}`; break; }
       if (e instanceof MoveRejected && /GAME_OVER|RUN_NOT_ACTIVE|RUN_COMPLETED/i.test(e.code)) { endReason = e.code; break; }
       // resync: reconnect gives a fresh authoritative state (fixes turn mismatch / dropped socket)

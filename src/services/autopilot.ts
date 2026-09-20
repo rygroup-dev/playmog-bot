@@ -1,4 +1,5 @@
 // Autopilot: free-value tasks (daily keys, upvote, quests) + Expedition autoplay + EV-gated Arcade.
+import { esc } from "../telegram/ui.js";
 import { MogApi, MogApiError, sleep } from "../mog/api.js";
 import { AbstractOps } from "../chain/abstract.js";
 import { Store } from "../db.js";
@@ -52,7 +53,9 @@ export class Autopilot {
       // resume any run left open (crash/restart) before starting new ones
       for (const t of ["EXPEDITION", "NORMAL", "WORLD"] as RunType[]) {
         const a = await this.api.get(`/api/runs/active?runType=${t}`);
-        if (a.activeRun) { await this.play(a.activeRun.id, t, true); return; }
+        if (!a.activeRun) continue;
+        if (this.store.get<string[]>("runs.abandoned", []).includes(a.activeRun.id)) continue; // sealed room etc: never retry
+        await this.play(a.activeRun.id, t, true); return;
       }
       if (st.autoExpedition) {
         const exp = (await this.api.get("/api/items/expedition-keys")).balance ?? 0;
@@ -94,7 +97,9 @@ export class Autopilot {
       const valor = Number((await this.api.get("/api/shop/valor/balance")).valorBalance);
       const pend = await this.api.get("/api/shop/valor/pending");
       const mm = this.market?.cfg();
-      const amount = valor - st.withdrawReserveValor - (mm?.enabled ? mm.capitalValor : 0); // never withdraw market capital
+      // never withdraw market capital; round down to a whole 100 VALOR and never ask for more than the balance
+      const raw = valor - st.withdrawReserveValor - (mm?.enabled ? mm.capitalValor : 0);
+      const amount = Math.floor(Math.min(raw, valor) / 100) * 100;
       if (!pend?.pending && amount >= 500) {
         const r = await this.claims.initiateWithdrawal(amount);
         this.store.ledger("withdraw", -r.netUsdc, `auto ${amount} VALOR`, r.hash);
@@ -161,9 +166,19 @@ export class Autopilot {
   async autoRedeem() {
     if (!this.claims) return;
     const r = await this.claims.redeemCaches(false);
-    if (!r) return;
-    this.store.event("info", `redeemed ${r.count} World's Eve cache(s)`);
-    await this.notify(`🎁 <b>${r.count} World's Eve Cache ditukar</b> (500 worldseed/cache) · sisa worldseed ${r.amber ?? "?"}\nIsinya masuk inventory; item yang laku dijual otomatis.`);
+    if (r) {
+      this.store.event("info", `redeemed ${r.count} World's Eve cache(s)`);
+      await this.notify(`🎁 <b>${r.count} World's Eve Cache ditukar</b> (500 worldseed/cache) · sisa worldseed ${r.amber ?? "?"}`);
+    }
+    // caches arrive as inventory items; opening them is a second step, otherwise the rewards never materialise
+    const o = await this.claims.openCaches(false);
+    if (o) {
+      this.store.event("info", `opened ${o.opened} cache(s): ${o.rewards.map((x) => `${x.qty}x ${x.name}`).join(", ")}`);
+      await this.notify(`📦 <b>${o.opened} World's Eve Cache dibuka</b>\n${o.rewards.map((x) => `  ◦ ${x.qty}× ${esc(x.name)}`).join("\n") || "  (isi tidak terbaca, cek /inv)"}\nItem yang laku akan dijual otomatis.`);
+    }
+    const sb = await this.claims.openSkinBoxes().catch(() => null);
+    if (sb) { this.store.event("info", `opened skin boxes: ${sb.map((x) => `${x.opened}x ${x.boxType}`).join(", ")}`); }
+    if (!r && !o) return;
   }
 
   /** One summary per UTC day (sent on the first slow tick after 00:00 UTC). */
@@ -282,6 +297,15 @@ export class Autopilot {
         onTurn: ({ g, reason }) => { if (this.running) Object.assign(this.running, { last: reason, floor: g.currentFloor, energy: g.player.energy, treasure: g.player.treasure }); },
       }, { ...DEFAULT_POLICY, acceptRooms: this.store.settings().acceptRooms });
       this.store.saveRun(summary, startedAt);
+      if (summary.endReason.startsWith("stuck")) {
+        const key = `runs.stuck.${runId}`;
+        const n = this.store.get<number>(key, 0) + 1; this.store.set(key, n);
+        if (n >= 2) { // twice in a row with no way forward: the run is unplayable (e.g. sealed bounty arena)
+          this.store.set("runs.abandoned", [...this.store.get<string[]>("runs.abandoned", []), runId].slice(-50));
+          this.store.event("warn", `run ${runId} abandoned: ${summary.endReason}`);
+          await this.notify(`🚧 <b>Run ${runType} ditinggalkan</b> — tidak ada jalan keluar (floor ${summary.floor}, turn ${summary.turns}).\nBot lanjut ke run berikutnya. Detail: <code>${runId.slice(-6)}</code>`, "warn");
+        }
+      }
       if (this.store.settings().notifyEveryRun || summary.endReason !== "game_over") await this.notify(formatRun(summary));
     } catch (e: any) {
       const m = e instanceof MogApiError ? `${e.status} ${e.code}` : String(e?.message ?? e);
