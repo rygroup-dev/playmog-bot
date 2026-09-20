@@ -277,15 +277,16 @@ export class Autopilot {
     const have = (await this.api.get("/api/keys/balance")).balance ?? 0;
     if (have < qty) {
       const need = BigInt(qty - have);
-      // VALOR is the cheaper rail when we have spare VALOR: 100 VALOR per key, no gas and no on-chain step
+      // keys are always paid in VALOR (100 each, no gas); USDC.e only tops up the shortfall
       const mm = this.market?.cfg();
-      const freeValor = Number((await this.api.get("/api/shop/valor/balance")).valorBalance)
-        - st.withdrawReserveValor - (mm?.enabled ? mm.capitalValor : 0);
-      if (freeValor >= Number(need) * 100 && this.claims) {
-        const v = await this.claims.buyKeysWithValor(Number(need));
-        this.store.ledger("buy_keys", v.valorSpent / 100, `${need} arcade keys (VALOR)`);
-        await this.notify(`🗝 <b>${need} Arcade key dibeli</b> — ${v.valorSpent} VALOR (tanpa gas) · sisa VALOR ${v.valor}`);
-        return;
+      const reserveValor = st.withdrawReserveValor + (mm?.enabled ? mm.capitalValor : 0);
+      if (this.claims) {
+        try {
+          const v = await this.claims.buyArcadeKeys(Number(need), { reserveValor, keepUsdc: st.worldUsdcReserve });
+          this.store.ledger("buy_keys", v.valorSpent / 100, `${need} arcade keys (VALOR${v.depositedUsd ? ` + $${v.depositedUsd} top-up` : ""})`, v.depositTx);
+          await this.notify(`🗝 <b>${need} Arcade key dibeli</b> — ${v.valorSpent} VALOR${v.depositedUsd ? ` (tambal $${v.depositedUsd} dari USDC.e)` : " (tanpa gas)"} · sisa VALOR ${v.valor}`);
+          return;
+        } catch (e: any) { this.log(`arcade: ${e.message}`); return; }
       }
       const { hash, price } = await this.abs.buyKeys(need);
       this.store.ledger("buy_keys", Number(price * need) / 1e6, `${need} arcade keys`, hash);

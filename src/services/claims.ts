@@ -196,6 +196,30 @@ export class ClaimsService {
     return { already: false, address: (r.linkedWalletAddress ?? account) as string, raw: r };
   }
 
+  /**
+   * Make sure `needValor` is available in-game, topping up from wallet USDC.e when it is not.
+   * `reserveValor` is VALOR that must stay untouched (market capital, pass reserve); `keepUsdc` is the wallet floor.
+   */
+  async ensureValor(needValor: number, { reserveValor = 0, keepUsdc = 0 } = {}) {
+    const valor = Number((await this.api.get("/api/shop/valor/balance")).valorBalance);
+    const free = Math.max(0, valor - reserveValor);
+    if (free >= needValor) return { valor, deposited: 0 };
+    const usd = Math.ceil((needValor - free) / 100);
+    const wallet = Number((await this.abs.balances()).usdc) / 1e6;
+    if (wallet - usd < keepUsdc) {
+      throw new Error(`butuh ${needValor} VALOR, tersedia ${free} (di luar cadangan ${reserveValor}); USDC.e ${wallet.toFixed(2)} kurang untuk menambal $${usd}`);
+    }
+    const r = await this.depositValorUsd(usd);
+    return { valor: r.valor, deposited: usd, hash: r.hash };
+  }
+
+  /** Arcade keys, always via VALOR (100 each, no gas), topping up from USDC.e when VALOR is short. */
+  async buyArcadeKeys(qty: number, opts: { reserveValor?: number; keepUsdc?: number } = {}) {
+    const top = await this.ensureValor(qty * 100, opts);
+    const r = await this.buyKeysWithValor(qty);
+    return { ...r, depositedUsd: top.deposited, depositTx: top.hash };
+  }
+
   /** Buy Arcade keys with in-game VALOR (100 VALOR per key): no gas, no on-chain step. */
   async buyKeysWithValor(quantity: number) {
     const before = Number((await this.api.get("/api/shop/valor/balance")).valorBalance);
