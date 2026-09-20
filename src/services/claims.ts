@@ -141,6 +141,22 @@ export class ClaimsService {
     return out.length ? out : null;
   }
 
+  /**
+   * Lobby "Ringjak Racing": stake VALOR on one of four lanes. 10-100 VALOR in steps of 5, 1st pays 3x, 2nd pays 0.8x,
+   * so the house keeps 5% on average — the best odds MoG offers, and still a loss over time.
+   * POST /api/lobby/derby {betId, stake, lane} -> {ticks, ranking, outcome: win|place|lose, valorBalance}
+   */
+  async lobbyDerby(stake: number, lane = Math.floor(Math.random() * 4)) {
+    if (stake < 10 || stake > 100 || stake % 5 !== 0) throw new Error("stake must be 10-100 VALOR in steps of 5");
+    if (lane < 0 || lane > 3) throw new Error("lane must be 0-3");
+    const before = Number((await this.api.get("/api/shop/valor/balance")).valorBalance);
+    const r = await this.api.post("/api/lobby/derby", { betId: randomUUID(), stake, lane });
+    const after = Number(r.valorBalance ?? before);
+    const outcome = String(r.outcome ?? "lose");
+    return { stake, lane, outcome, payout: after - (before - stake), delta: after - before, valor: after,
+      lanes: ["Merah", "Biru", "Hijau", "Kuning"], raw: r };
+  }
+
   /** Deposit USDC.e into VALOR (100 VALOR = 1 USD, no fee) and confirm with the backend. */
   async depositValorUsd(usd: number) {
     const raw = BigInt(Math.round(usd * 1e6));

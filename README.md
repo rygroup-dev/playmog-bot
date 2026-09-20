@@ -194,8 +194,10 @@ Every game of chance in MoG pays back less than it takes. The numbers come from 
 |---|---|---|
 | Ringjak Derby (in-run room) | 4 runners, equal chance; 1st pays 3×, 2nd returns 0.5×; stake up to 10% of treasure | **87.5%** |
 | Portal Gambit (in-run room) | Five rows, one wrong portal per row; clear all five to triple the stake | below 100% |
-| Ringjak Racing (lobby, VALOR) | 10–100 VALOR in steps of 5; 1st pays 3×, 2nd returns 0.8× | **95%** |
-| Fortune's Gambit (Emporium) | Wager worldseeds, double or nothing | currently disabled server-side |
+| Ringjak Racing (lobby, VALOR) | 10–100 VALOR in steps of 5; 1st pays 3×, 2nd returns 0.8× | **95%** (disabled server-side: `lobbyDerby=false`) |
+| Fortune's Gambit / Treasure Map (Emporium) | Wager worldseeds, double or nothing | disabled server-side for everyone (`fortunesGambit`, `treasureMap`, `emporium` are all false) |
+
+Only the two in-run rooms are live today. The bot places the bet, plays the room (one portal per row in Portal Gambit), and reports the stake, the balance change and the server's raw outcome. Lobby Ringjak Racing is implemented behind a Telegram button and will work the moment the game re-enables it.
 
 | Setting | Default | What it does |
 |---|---|---|

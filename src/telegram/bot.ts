@@ -377,11 +377,13 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       row("Catatan", "jumlah portal per baris belum terukur; bot mencatatnya saat pertama masuk"),
       section("🎰 Fortune's Gambit & Treasure Map (Emporium)"),
       row("Fortune's Gambit", "taruh worldseed, dua kali lipat atau habis"),
-      row("Status", "🔴 dimatikan server untuk akun kita (404)"),
+      row("Treasure Map", "cari World's Eve Box yang terkubur"),
+      row("Status", "🔴 dimatikan untuk semua pemain (<code>fortunesGambit/treasureMap/emporium=false</code>)"),
       section("🐎 Ringjak Racing (lobi, pakai VALOR)"),
       row("Taruhan", "10–100 VALOR, kelipatan 5"),
       row("Bayaran", "juara 1 = 3× · juara 2 = 0,8× · hasil rata-rata <b>95%</b>"),
-      row("Status", "ada di server, belum dipakai bot"),
+      row("Status", "🔴 dimatikan server (<code>lobbyDerby=false</code> di config game, POST balas 404)"),
+      row("Kalau dibuka", "tombol balap di bawah langsung bisa dipakai"),
       section("🎟 Gacha token (dijual, tidak dipakai di MoG)"),
       row("Bronze / Silver", `${px("gacha.bronze")} / ${px("gacha.silver")}`),
       row("Gold / Rainbow", `${px("gacha.gold")} / ${px("gacha.rainbow")}`),
@@ -399,6 +401,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       .text(`${check(st.gambleRingRace)} Derby`, "s:gambleRingRace").text(`${check(st.gamblePortalGambit)} Portal Gambit`, "s:gamblePortalGambit").row()
       .text("➖", "n:gambleWagerPct:-0.01").text(`Taruhan ${Math.round((st.gambleWagerPct ?? 0.05) * 100)}%`, "noop").text("➕", "n:gambleWagerPct:0.01").row()
       .text("➖", "n:gambleMaxPerDay:-1").text(`Maks ${st.gambleMaxPerDay ?? 3}×/hari`, "noop").text("➕", "n:gambleMaxPerDay:1").row()
+      .text("🐎 Balap 10", "c:derby:10").text("🐎 25", "c:derby:25").text("🐎 50", "c:derby:50").row()
       .text("🎒 Inventory", "v:inv").text("📈 Market", "v:market");
     return { text: lines.join("\n"), kb: nav(kb, "v:gamble") };
   }
@@ -783,6 +786,30 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       const plan = fundWatch?.plan(); if (plan && !plan.doneAt) store.set("fund.plan", { ...plan, doneAt: Date.now(), tx: r.hash });
       await ctx.reply(resultCard("Modal market masuk", `${row("VALOR sekarang", `<b>${num(r.valor)}</b>`)}\n${row("Modal market", `<b>${num(cap)} VALOR</b>`)}\n${row("Tx", `<code>${r.hash}</code>`)}`), { parse_mode: "HTML" }); }
     catch (e: any) { await ctx.reply(`❌ ${esc(e.shortMessage ?? e.message)}`, { parse_mode: "HTML" }); }
+  });
+
+  const pendingDerby = new Map<string, { stake: number; exp: number }>();
+  bot.callbackQuery(/^c:derby:(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery(); const stake = Number(ctx.match[1]); const id = String(randomInt(1e9));
+    pendingDerby.set(id, { stake, exp: Date.now() + 60_000 });
+    await edit(ctx, { text: `${header("🐎", "RINGJAK RACING")}\n${row("Taruhan", `<b>${stake} VALOR</b> · lajur dipilih acak`)}\n${row("Bayaran", `juara 1 = <b>${stake * 3}</b> · juara 2 = <b>${Math.floor(stake * 0.8)}</b>`)}\n${row("Peluang", "25% juara 1 · 25% juara 2")}\n${footer("Rata-rata balik 95% — jangka panjang tetap rugi.")}`,
+      kb: new InlineKeyboard().text(`✅ Balap ${stake}`, `x:derby:${id}`).text("❌ Batal", "v:gamble") });
+  });
+  bot.callbackQuery(/^x:derby:(\d+)$/, async (ctx) => {
+    const p = pendingDerby.get(ctx.match[1]); pendingDerby.delete(ctx.match[1]);
+    if (!p || p.exp < Date.now()) return ctx.answerCallbackQuery({ text: "Kedaluwarsa, ulangi.", show_alert: true });
+    await ctx.answerCallbackQuery({ text: "Balapan…" });
+    try {
+      const r = await claims.lobbyDerby(p.stake);
+      const won = r.delta > 0, label = r.outcome === "win" ? "🥇 Juara 1" : r.outcome === "place" ? "🥈 Juara 2" : "❌ Kalah";
+      store.ledger("gamble_bet", 0, `lobby derby wager ${p.stake} VALOR`);
+      store.ledger(won ? "gamble_win" : "gamble_loss", r.delta / 100, `lobby derby ${r.outcome} ${r.delta >= 0 ? "+" : ""}${r.delta} VALOR`);
+      await ctx.reply(resultCard("Hasil balapan", `${row("Lajur", esc(r.lanes[r.lane]))}\n${row("Hasil", label)}\n${row("Perubahan", `<b>${r.delta >= 0 ? "+" : ""}${num(r.delta)} VALOR</b>`)}\n${row("Saldo VALOR", num(r.valor))}`), { parse_mode: "HTML" });
+      cachedSnap = null;
+    } catch (e: any) {
+      const off = /404/.test(String(e.message));
+      await ctx.reply(off ? "🔴 Ringjak Racing lobi sedang dimatikan server game (<code>lobbyDerby=false</code>). Taruhan tidak jadi, VALOR tidak terpotong." : `❌ ${esc(e.message)}`, { parse_mode: "HTML" });
+    }
   });
 
   const pendingValor = new Map<string, { usd: number; exp: number }>();
