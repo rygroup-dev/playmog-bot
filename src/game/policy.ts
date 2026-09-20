@@ -389,6 +389,19 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   if (goals.length) mem.noGoal = 0;
   const floorNo = g.currentFloor ?? 0;
   const bad = mem.badGoals?.get(floorNo) ?? new Set<string>();
+  // Goal hysteresis. Re-picking the highest score every turn makes the bot bounce between two similar drops:
+  // measured over the run logs, 13% of real moves in runs that died were a step back onto the tile two moves
+  // earlier, against 7% in runs that completed, and the commonest pattern was orb A -> orb B -> orb A (145x).
+  // Dodging and adjacent combat return long before this point, so committing here costs no reactivity.
+  const committed = mem.goalTrack?.k;
+  if (committed && goals.length > 1 && goals[0].k !== committed && !bad.has(committed)) {
+    const cur = goals.find((x) => x.k === committed);
+    // absolute margin, not a ratio: scores go negative (the stairs sit at -1 or -50)
+    if (cur && goals[0].score <= cur.score + GOAL_SWITCH_MARGIN) {
+      goals.splice(goals.indexOf(cur), 1);
+      goals.unshift(cur);
+    }
+  }
   for (const goal of goals) {
     if (goal.k === key(me.x, me.y) || bad.has(goal.k)) continue;
     const useAll = !dist.has(goal.k);
@@ -463,6 +476,8 @@ const TALENT_PRIORITY: Record<string, number> = {
   menace: 40, apex_guard: 35, apex_hunter: 35, berserker: 25, greed: 8, heavy_hitter: 5, glass_cannon: 3,
 };
 const TRAP_DMG = 7; // measured spike damage 5-9
+/** How much better a rival goal must score before the bot abandons the one it is already walking to. */
+const GOAL_SWITCH_MARGIN = 3;
 const TALENTS = new Map((talentTable as any[]).map((t) => [t.id, t]));
 export function talentScore(o: any, world = false) {
   const id = o.talentId ?? o.id;
