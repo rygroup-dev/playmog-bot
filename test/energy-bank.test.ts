@@ -105,3 +105,27 @@ describe("unbroken pots count as energy left on the floor", () => {
     expect(decide(state(bare, {}, { energy: 40 })).reason).toContain("stairs");
   });
 });
+
+/**
+ * Live run: floor 5 was farmed for 53 unique tiles and 87 orb energy, but the walking cost more than the
+ * orbs paid — the run entered floor 6 with 24 energy where the previous run had entered with 87, and died
+ * there. Past a fair trial, if the bank is no bigger than on arrival, the floor is not paying.
+ */
+describe("farming stops when it stops paying", () => {
+  const wide2 = ["############", "#@..p......#", "#..........#", "#..........#", "#.........S#", "############"];
+  const after = (turnsHere: number, entryEnergy: number, energy: number) =>
+    decide({ ...state(wide2, {}, { energy }), turnNumber: turnsHere },
+      undefined, { ...newMemory(), floorSince: { floor: 4, turn: 0, energy: entryEnergy } }).reason;
+
+  it("keeps farming while the bank is still growing", () => {
+    expect(after(60, 30, 45)).not.toContain("stairs");   // arrived at 30, now 45: it is working
+  });
+
+  it("gives up once a fair trial has passed and energy is below arrival", () => {
+    expect(after(60, 60, 40)).toContain("stairs");       // arrived at 60, now 40: it is not
+  });
+
+  it("still gives every floor a fair trial first", () => {
+    expect(after(20, 60, 40)).not.toContain("stairs");   // too early to judge
+  });
+});

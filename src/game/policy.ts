@@ -14,7 +14,7 @@ export interface PolicyMemory {
   blockedTiles?: Map<number, Set<string>>; // floor -> tiles the server refused to let us walk onto
   badGoals?: Map<number, Set<string>>;     // floor -> goal tiles we never got closer to (unreachable behind a gate, …)
   goalTrack?: { k: string; best: number; tries: number };
-  floorSince?: { floor: number; turn: number }; // when we arrived on the current floor (caps the energy-bank hold)
+  floorSince?: { floor: number; turn: number; energy: number }; // arrival on this floor: caps the energy-bank hold
   teleported?: boolean;             // the game's teleport escape was already used this run
   arrows: Map<number, Set<string>>; // floor -> tiles an arrow trap hit us on (fires on entering its lane: avoid, never "step off" into it)
 }
@@ -267,9 +267,15 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   // 176 turns on floor 6 burned 119 energy of walking to collect 92 of orbs, and 136 turns on floor 4 burned
   // 90 to collect 79 - both net losses. A completed run averages ~110 turns per floor, so past that the
   // floor is picked clean and holding the descent only walks the run to death.
-  if (mem.floorSince?.floor !== floorNow) mem.floorSince = { floor: floorNow, turn: g.turnNumber ?? 0 };
+  if (mem.floorSince?.floor !== floorNow) mem.floorSince = { floor: floorNow, turn: g.turnNumber ?? 0, energy };
   const turnsHere = (g.turnNumber ?? 0) - (mem.floorSince?.turn ?? 0);
   const FARM_TURN_CAP = 110;
+  // Farming only earns its keep while the bank actually grows. Live run: floor 5 was farmed for 53 tiles and
+  // 87 orb energy, but the walking cost more than the orbs paid, so the run entered floor 6 with 24 energy
+  // instead of the 87 the previous run had, and died there. Past a fair trial, if we are no better off than
+  // when we arrived, the floor is not paying and the descent should not wait for it.
+  const FARM_TRIAL = 40;
+  const farmingPays = energy >= (mem.floorSince?.energy ?? energy);
   const goals: { k: string; score: number; why: string; adjTarget?: any }[] = [];
   const reachAdj = (t: P) => {
     let best: { k: string; d: number } | null = null;
@@ -357,7 +363,9 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   // but hold the descent while the next floor's measured entry bank is short AND energy is still farmable here —
   // arriving at floor 5 or 10 underfunded is what ended 43 of 45 logged runs.
   if (stairsDist && stairsDist.k !== key(me.x, me.y) && energy > stairsDist.d) {
-    const spent = turnsHere >= FARM_TURN_CAP;
+    // "this floor is done": either we have been here far longer than a completed run averages, or we gave
+    // farming a fair trial and the bank is no bigger than when we arrived.
+    const spent = turnsHere >= FARM_TURN_CAP || (turnsHere >= FARM_TRIAL && !farmingPays);
     const hold = belowBank && hasEnergyGoal && !spent;
     // Past the cap the floor has to actively outbid the stairs: a +2 orb across the room is what turned
     // floor 6 into 176 turns and 119 energy of walking, while a genuinely rich drop still wins.
