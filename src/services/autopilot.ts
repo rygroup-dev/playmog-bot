@@ -284,6 +284,29 @@ export class Autopilot {
     await this.play(c.runId, runType, false);
   }
 
+  /** Bets placed today (UTC), used for the daily cap and the /gamble summary. */
+  betsToday() {
+    const dayStart = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z").getTime();
+    return this.store.countSince(dayStart, "gamble_bet", "%");
+  }
+
+  /** One bet or one result: booked in the ledger and pushed to Telegram, so nothing happens silently. */
+  private async onGamble(e: import("../game/runner.js").GambleEvent) {
+    const name = e.game === "ringrace" ? "Ringjak Derby" : "Portal Gambit";
+    const unit = e.unit === "worldseed" ? "worldseed" : "treasure";
+    if (e.phase === "bet") {
+      this.store.ledger("gamble_bet", 0, `${e.game} wager ${e.wager} ${unit} (floor ${e.floor})`);
+      const left = Math.max(0, (this.store.settings().gambleMaxPerDay ?? 3) - this.betsToday());
+      await this.notify(`🎲 <b>Taruhan ${name}</b>\nTaruh <b>${e.wager} ${unit}</b> · floor ${e.floor}\nSisa jatah taruhan hari ini: ${left}`);
+      return;
+    }
+    const delta = (e.walletAfter ?? 0) - (e.walletBefore ?? 0);
+    const won = delta > 0;
+    this.store.ledger(won ? "gamble_win" : "gamble_loss", 0, `${e.game} wager ${e.wager} → ${delta >= 0 ? "+" : ""}${delta} ${unit} (${JSON.stringify(e.outcome).slice(0, 40)})`);
+    this.store.event("info", `gamble ${e.game}: wager ${e.wager} outcome ${JSON.stringify(e.outcome)} delta ${delta}`);
+    await this.notify(`${won ? "🟢" : "🔴"} <b>Hasil ${name}</b>\nTaruhan ${e.wager} ${unit} → <b>${delta >= 0 ? "+" : ""}${delta} ${unit}</b>\nHasil server: <code>${String(JSON.stringify(e.outcome)).slice(0, 60)}</code>`);
+  }
+
   private async play(runId: string, runType: RunType, resumed: boolean) {
     if (this.running) return;
     this.stopRequested = false;
@@ -294,9 +317,11 @@ export class Autopilot {
     const st = this.store.settings();
     try {
       summary = await playRun(this.api, runId, runType, {
+        onGamble: (e) => void this.onGamble(e),
         log: this.log, shouldStop: () => this.stopRequested,
         onTurn: ({ g, reason }) => { if (this.running) Object.assign(this.running, { last: reason, floor: g.currentFloor, energy: g.player.energy, treasure: g.player.treasure }); },
-      }, { ...DEFAULT_POLICY, acceptRooms: st.acceptRooms, gambleRingRace: st.gambleRingRace, gamblePortalGambit: st.gamblePortalGambit, gambleWagerPct: st.gambleWagerPct });
+      }, { ...DEFAULT_POLICY, acceptRooms: st.acceptRooms, gambleRingRace: st.gambleRingRace, gamblePortalGambit: st.gamblePortalGambit,
+           gambleWagerPct: st.gambleWagerPct, gambleBetsLeft: Math.max(0, (st.gambleMaxPerDay ?? 3) - this.betsToday()) });
       this.store.saveRun(summary, startedAt);
       if (summary.endReason.startsWith("stuck")) {
         const key = `runs.stuck.${runId}`;

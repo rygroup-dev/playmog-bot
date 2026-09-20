@@ -353,6 +353,15 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
   /** Every game of chance MoG offers, with the numbers taken from the game client itself. */
   async function vGamble(): Promise<View> {
     const st = store.settings();
+    const dayStart = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z").getTime();
+    const rows = store.ledgerSince(Date.now() - 7 * 864e5).filter((l: any) => String(l.kind).startsWith("gamble"));
+    const betStats = {
+      today: rows.filter((l: any) => l.kind === "gamble_bet" && l.ts >= dayStart).length,
+      bets: rows.filter((l: any) => l.kind === "gamble_bet").length,
+      wins: rows.filter((l: any) => l.kind === "gamble_win").length,
+      losses: rows.filter((l: any) => l.kind === "gamble_loss").length,
+      last: rows.filter((l: any) => l.kind !== "gamble_bet").slice(0, 3).map((l: any) => `${l.kind === "gamble_win" ? "🟢" : "🔴"} ${l.detail}`),
+    };
     const book = await market.summary().catch(() => new Map());
     const px = (k: string) => { const a: any = (book as Map<string, any>).get(k); return a?.lowestAsk ? `${num(Number(a.lowestAsk))} VALOR` : "-"; };
     const lines = [header("🎲", "JUDI & GACHA"),
@@ -377,13 +386,19 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       row("Bronze / Silver", `${px("gacha.bronze")} / ${px("gacha.silver")}`),
       row("Gold / Rainbow", `${px("gacha.gold")} / ${px("gacha.rainbow")}`),
       row("Catatan", "token gacha hanya bisa di-roll di game Onchain Heroes, jadi bot menjualnya"),
+      section("📊 Riwayat taruhan bot"),
+      row("Hari ini", `${betStats.today} taruhan · sisa jatah ${Math.max(0, (st.gambleMaxPerDay ?? 3) - betStats.today)}`),
+      row("Total", `${betStats.bets} taruhan · <b>${betStats.wins} menang</b> / ${betStats.losses} kalah`),
+      ...(betStats.last.length ? betStats.last.map((l: string) => `     · ${esc(l)}`) : ["     · belum ada taruhan"]),
       section("Saklar taruhan bot"),
       row("Ringjak Derby", on(st.gambleRingRace)), row("Portal Gambit", on(st.gamblePortalGambit)),
-      row("Besar taruhan", `${Math.round((st.gambleWagerPct ?? 0.05) * 100)}% dari treasure/worldseed`),
+      row("Besar taruhan", `${Math.round((st.gambleWagerPct ?? 0.05) * 100)}% dari treasure/worldseed (batas game 10%)`),
+      row("Maks per hari", `${st.gambleMaxPerDay ?? 3} taruhan`),
       footer("Semua permainan ini rugi dalam jangka panjang. Kalau saklar mati, bot tetap masuk ruangannya tapi bertaruh 0 supaya bisa lewat.")];
     const kb = new InlineKeyboard()
       .text(`${check(st.gambleRingRace)} Derby`, "s:gambleRingRace").text(`${check(st.gamblePortalGambit)} Portal Gambit`, "s:gamblePortalGambit").row()
       .text("➖", "n:gambleWagerPct:-0.01").text(`Taruhan ${Math.round((st.gambleWagerPct ?? 0.05) * 100)}%`, "noop").text("➕", "n:gambleWagerPct:0.01").row()
+      .text("➖", "n:gambleMaxPerDay:-1").text(`Maks ${st.gambleMaxPerDay ?? 3}×/hari`, "noop").text("➕", "n:gambleMaxPerDay:1").row()
       .text("🎒 Inventory", "v:inv").text("📈 Market", "v:market");
     return { text: lines.join("\n"), kb: nav(kb, "v:gamble") };
   }
@@ -642,7 +657,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
   });
   bot.callbackQuery(/^n:(\w+):(-?[\d.]+)$/, async (ctx) => {
     const k = ctx.match[1] as keyof Settings; const d = Number(ctx.match[2]); const st = store.settings();
-    const limits: Record<string, [number, number]> = { arcadeDailyUsdCap: [0, 100], arcadeKeysPerRun: [1, 100], minPoolEvPerKey: [0.5, 2], worldBuysPerDay: [0, 10], gambleWagerPct: [0.01, 0.1] };
+    const limits: Record<string, [number, number]> = { arcadeDailyUsdCap: [0, 100], arcadeKeysPerRun: [1, 100], minPoolEvPerKey: [0.5, 2], worldBuysPerDay: [0, 10], gambleWagerPct: [0.01, 0.1], gambleMaxPerDay: [0, 20] };
     if (!(k in limits)) return ctx.answerCallbackQuery();
     const [lo, hi] = limits[k]; const v = Math.min(hi, Math.max(lo, Math.round(((st[k] as number) + d) * 100) / 100));
     store.patchSettings({ [k]: v } as Partial<Settings>);

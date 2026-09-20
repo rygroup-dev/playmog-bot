@@ -146,13 +146,17 @@ describe("gambling rooms", () => {
     expect(d.runAction).toMatchObject({ type: "ring_race_bet", wager: 0 });
   });
   it("stakes the configured share when the owner turns betting on", () => {
-    const d = decide({ ...room("ringrace"), v2RingRaceWager: null } as any, { ...DEFAULT_POLICY, gambleRingRace: true, gambleWagerPct: 0.05 });
+    const d = decide({ ...room("ringrace"), v2RingRaceWager: null } as any, { ...DEFAULT_POLICY, gambleRingRace: true, gambleWagerPct: 0.05, gambleBetsLeft: 3 });
     expect((d.runAction as any).wager).toBe(50);
     expect((d.runAction as any).lane).toBeGreaterThanOrEqual(0);
     expect((d.runAction as any).lane).toBeLessThanOrEqual(3);
   });
+  it("stakes nothing once the daily bet budget is used up", () => {
+    const d = decide({ ...room("ringrace"), v2RingRaceWager: null } as any, { ...DEFAULT_POLICY, gambleRingRace: true, gambleWagerPct: 0.1, gambleBetsLeft: 0 });
+    expect(d.runAction).toMatchObject({ type: "ring_race_bet", wager: 0 });
+  });
   it("caps the stake at the game's own 10% limit", () => {
-    const d = decide({ ...room("portalgambit"), v2PortalGambitWager: null } as any, { ...DEFAULT_POLICY, gamblePortalGambit: true, gambleWagerPct: 0.9 });
+    const d = decide({ ...room("portalgambit"), v2PortalGambitWager: null } as any, { ...DEFAULT_POLICY, gamblePortalGambit: true, gambleWagerPct: 0.9, gambleBetsLeft: 1 });
     expect((d.runAction as any)).toMatchObject({ type: "portal_gambit_bet", wager: 100 });
   });
 });

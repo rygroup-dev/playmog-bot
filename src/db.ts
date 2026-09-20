@@ -9,13 +9,13 @@ export type Settings = {
   autoWithdraw: boolean; withdrawReserveValor: number;
   autoWorld: boolean; autoRedeemCaches: boolean; autoSellLoot: boolean;
   worldBuysPerDay: number; worldKeyMaxPrice: number; worldUsdcReserve: number; playOwnedArcadeKeys: boolean;
-  gambleRingRace: boolean; gamblePortalGambit: boolean; gambleWagerPct: number; // in-run betting (off by default: house edge)
+  gambleRingRace: boolean; gamblePortalGambit: boolean; gambleWagerPct: number; gambleMaxPerDay: number; // in-run betting (off by default: house edge)
 };
 export const DEFAULT_SETTINGS: Settings = {
   autoDaily: true, autoUpvote: true, autoExpedition: true, autoArcade: false,
   arcadeKeysPerRun: 1, arcadeDailyUsdCap: 5, minPoolEvPerKey: 1.0,
   expeditionReserveKeys: 0, notifyEveryRun: true, paused: false, acceptRooms: ["shrine", "armory", "jackalot"],
-  gambleRingRace: false, gamblePortalGambit: false, gambleWagerPct: 0.05,
+  gambleRingRace: false, gamblePortalGambit: false, gambleWagerPct: 0.05, gambleMaxPerDay: 3,
   autoWithdraw: true, withdrawReserveValor: 1000,
   autoWorld: false, autoRedeemCaches: true, autoSellLoot: true,
   worldBuysPerDay: 3, worldKeyMaxPrice: 250, worldUsdcReserve: 3, playOwnedArcadeKeys: true,
@@ -49,6 +49,10 @@ export class Store {
   runStatsSince(ts: number) {
     return this.db.prepare(`SELECT run_type, COUNT(*) n, SUM(keys_used) keys, SUM(treasure) treasure, SUM(marbles) marbles, SUM(arcade_keys) ak, MAX(treasure) best, MAX(floor) best_floor
       FROM runs WHERE ended_at >= ? GROUP BY run_type`).all(ts) as any[];
+  }
+  /** Ledger rows since a timestamp, newest first (used by the gambling summary). */
+  ledgerSince(ts: number): { ts: number; kind: string; usd: number; detail: string; tx: string | null }[] {
+    return this.db.prepare("SELECT ts,kind,usd,detail,tx FROM ledger WHERE ts >= ? ORDER BY ts DESC").all(ts) as any;
   }
   ledger(kind: string, usd: number, detail: string, tx?: string) { this.db.prepare("INSERT INTO ledger(ts,kind,usd,detail,tx) VALUES(?,?,?,?,?)").run(Date.now(), kind, usd, detail, tx ?? null); }
   spentSince(ts: number, kinds: string[]) {

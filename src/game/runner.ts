@@ -10,7 +10,10 @@ export interface RunSummary {
   treasure: number; marbles: number; arcadeKeys: number; amber: number; raffleTickets: number; kills: number; energyLeft: number; level: number;
   damageTaken: number; unpredictedHits: number; avgRttMs: number; endReason: string; lootEvents: Record<string, number>;
 }
-export interface RunnerHooks { onTurn?: (t: { turn: number; reason: string; g: any; events: any[] }) => void; shouldStop?: () => boolean; log?: (m: string) => void }
+export interface GambleEvent { game: "ringrace" | "portalgambit"; phase: "bet" | "result"; wager: number; unit: "treasure" | "worldseed";
+  outcome?: unknown; walletBefore?: number; walletAfter?: number; floor: number }
+export interface RunnerHooks { onTurn?: (t: { turn: number; reason: string; g: any; events: any[] }) => void; shouldStop?: () => boolean;
+  onGamble?: (e: GambleEvent) => void; log?: (m: string) => void }
 
 export async function playRun(api: MogApi, runId: string, runType: RunType, hooks: RunnerHooks = {}, cfg: PolicyConfig = DEFAULT_POLICY): Promise<RunSummary> {
   const log = hooks.log ?? (() => {});
@@ -23,6 +26,10 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
   const mem = newMemory();
   const loggedFloors = new Set<number>();
   const seenRooms = new Set<string>();
+  // gambling: remember the stake and the balance at bet time so the result can be reported with a real delta
+  const bets = new Map<string, { wager: number; wallet: number }>();
+  const purse = (st: any) => (runType === "WORLD" ? st.player?.amber ?? 0 : st.player?.treasure ?? 0);
+  const unit = runType === "WORLD" ? "worldseed" as const : "treasure" as const;
   const noDmg = new Map<string, number>(); // consecutive attacks on a target that did no damage
   let lastProgressTurn = g.turnNumber ?? 0, lastEnergy = g.player?.energy ?? 0, lastTreasure = g.player?.treasure ?? 0, lastFloor = g.currentFloor ?? 0;
 
@@ -85,7 +92,13 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
     if (stuckStreak > 2) { endReason = "stuck: no safe action (run left open, not drained)"; break; }
     try {
       if (dec.runAction) {
+        const betGame = dec.runAction.type === "ring_race_bet" ? "ringrace" as const : dec.runAction.type === "portal_gambit_bet" ? "portalgambit" as const : null;
+        const betWager = betGame ? Number((dec.runAction as any).wager ?? 0) : 0;
         const ack = await room.runAction(dec.runAction);
+        if (betGame && betWager > 0) {
+          bets.set(betGame, { wager: betWager, wallet: purse(before) });
+          hooks.onGamble?.({ game: betGame, phase: "bet", wager: betWager, unit, floor: before.currentFloor ?? 0, walletBefore: purse(before) });
+        }
         appendFileSync(file, JSON.stringify({ t: Date.now(), turn: before.turnNumber, floor: before.currentFloor, runAction: dec.runAction, reason: dec.reason, ack: { ...ack, gameState: undefined }, prompt: before.v2UpgradeRoomPrompt }) + "\n");
         g = room.state; errStreak = 0;
         hooks.onTurn?.({ turn: g.turnNumber, reason: dec.reason, g, events: ack?.events ?? [] });
@@ -131,6 +144,13 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
         talents: before.player.pendingTalentRolls?.length ? before.player.pendingTalentRolls : undefined, prompt: before.v2UpgradeRoomPrompt ?? undefined,
         upgrades: before.pendingUpgradeOptions?.length ? before.pendingUpgradeOptions : undefined,
         enemies: before.enemies?.map((e: any) => [e.id, e.x, e.y, e.hp, e.v2AttackPhase, e.v2AttackTurns, e.v2AttackDir, e.v2AttackTargetX, e.v2AttackTargetY]) }) + "\n");
+      // a finished bet: the server fills in the outcome field, so report it once with the balance change
+      for (const [game, info] of [...bets]) {
+        const outcome = game === "ringrace" ? g.v2RingRaceOutcome : g.v2PortalGambitOutcome;
+        if (outcome == null) continue;
+        bets.delete(game);
+        hooks.onGamble?.({ game: game as any, phase: "result", wager: info.wager, unit, outcome, walletBefore: info.wallet, walletAfter: purse(g), floor: g.currentFloor ?? 0 });
+      }
       hooks.onTurn?.({ turn: g.turnNumber, reason: dec.reason, g, events: r.events });
       if (r.isGameOver) { endReason = "game_over"; break; }
     } catch (e: any) {

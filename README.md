@@ -202,6 +202,9 @@ Every game of chance in MoG pays back less than it takes. The numbers come from 
 | Bet in Ringjak Derby | off | When off, the bot enters the room, stakes **0**, and walks on |
 | Bet in Portal Gambit | off | Same, with a zero stake |
 | Stake size | 5% | Share of treasure (or worldseeds in World's Eve) to stake when betting is on, capped at the game's own 10% limit |
+| Max bets per day | 3 | Hard ceiling. Once it is used up the bot walks through gambling rooms with a zero stake |
+
+Every bet and every result is written to the ledger and sent to Telegram: the stake, the balance change, and the raw outcome the server returned. The **🎲 Judi & Gacha** page shows today's count, the remaining budget, and the last results.
 
 ### Market-making
 

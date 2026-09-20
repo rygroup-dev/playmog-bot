@@ -34,6 +34,7 @@ export interface PolicyConfig {
   gambleRingRace?: boolean;   // stake in the Ringjak Derby room (house keeps 12.5%)
   gamblePortalGambit?: boolean; // stake in Portal Gambit
   gambleWagerPct?: number;    // share of treasure/worldseeds to stake, capped at the game's own 10% limit
+  gambleBetsLeft?: number;    // bets still allowed today (0 = walk through the room with a zero stake)
   energyReserve: number;      // keep this much energy beyond the path to the stairs
   exploreSlack: number;       // extra energy needed before chasing optional loot/exploration
   maxLootDetour: number;      // max path length to go for a breakable/pickup
@@ -96,12 +97,13 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   {
     const rt = g.v2CurrentRoomType ?? null;
     const wallet0 = wallet(g);
+    const betsLeft = cfg.gambleBetsLeft ?? 0;
     if (rt === "ringrace" && g.v2RingRaceWager == null) {
-      const want = cfg.gambleRingRace ? Math.max(1, Math.floor(wallet0 * Math.min(cfg.gambleWagerPct ?? 0.05, 0.1))) : 0;
+      const want = cfg.gambleRingRace && betsLeft > 0 ? Math.max(1, Math.floor(wallet0 * Math.min(cfg.gambleWagerPct ?? 0.05, 0.1))) : 0;
       return { runAction: { type: "ring_race_bet", lane: Math.floor(Math.random() * 4), wager: want }, reason: want ? `ring race bet ${want}` : "ring race: no bet (pass through)", danger: dangerList };
     }
     if (rt === "portalgambit" && g.v2PortalGambitWager == null) {
-      const want = cfg.gamblePortalGambit ? Math.max(1, Math.floor(wallet0 * Math.min(cfg.gambleWagerPct ?? 0.05, 0.1))) : 0;
+      const want = cfg.gamblePortalGambit && betsLeft > 0 ? Math.max(1, Math.floor(wallet0 * Math.min(cfg.gambleWagerPct ?? 0.05, 0.1))) : 0;
       return { runAction: { type: "portal_gambit_bet", wager: want }, reason: want ? `portal gambit bet ${want}` : "portal gambit: no bet (pass through)", danger: dangerList };
     }
     // bet placed: the game asks us to walk into one portal per row. Every portal in a row looks the same, so we
