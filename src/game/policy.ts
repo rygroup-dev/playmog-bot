@@ -269,8 +269,11 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
     const isEnergy = !!p.type?.includes("energy_orb");
     // with the boss up, only energy is worth walking for — treasure can wait until he is down
     if (bossAlive && !isEnergy && d > 1) continue;
-    // deep floors: a long walk for a small drop is what starves the boss fight (measured: 180 pickup steps on floor 10)
-    if (floorNow >= 8 && !isEnergy && d > 4 && pickupValue(p, ctx) < d * 1.5) continue;
+    // Walking is paid in energy, and energy is what buys the deeper floors where drops are worth more. A drop must
+    // therefore beat its walk by a margin, not merely break even (measured: chasing drops was the single biggest
+    // energy sink in every run). Energy orbs are exempt — they pay their own way back.
+    const margin = floorNow >= 8 ? 2 : 1.5;
+    if (!isEnergy && d > 2 && pickupValue(p, ctx) < d * margin) continue;
     const net = pickupValue(p, ctx) - d;
     if (net > 0 || (p.type?.includes("energy_orb") && pickupValue(p, ctx) > d)) goals.push({ k, score: net, why: `pickup ${p.type}${p.itemId ? " " + p.itemId : ""} (+${net.toFixed(1)})` });
   }

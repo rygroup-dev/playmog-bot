@@ -272,3 +272,24 @@ describe("completion budget", () => {
     expect(decide(g as any).reason).toContain("stairs");
   });
 });
+
+describe("walking discipline", () => {
+  const room = (floor: number, pickups: any[]) => {
+    const g: any = state(["#########", "#@......#", "#.......#", "#########"]);
+    g.currentFloor = floor; g.player.energy = 80; g.player.attackPower = 20; g.pickups = pickups;
+    g.interactive = [{ id: "stairs_exit", type: "stairs", x: 2, y: 2 }];
+    return g;
+  };
+  it("walks for a drop that clearly beats the walk", () => {
+    const d = decide(room(3, [{ id: "t", x: 4, y: 1, type: "treasure", value: 60 }]) as any);
+    expect(d.reason).toContain("pickup treasure");
+  });
+  it("skips a drop that barely beats the walk", () => {
+    const d = decide(room(3, [{ id: "t", x: 6, y: 2, type: "treasure", value: 24 }]) as any);
+    expect(d.reason).not.toContain("pickup treasure");
+  });
+  it("always walks to an energy orb that pays for itself", () => {
+    const d = decide(room(3, [{ id: "o", x: 6, y: 2, type: "large_energy_orb", value: 20 }]) as any);
+    expect(d.reason).toContain("energy_orb");
+  });
+});
