@@ -68,12 +68,16 @@ export class ClaimsService {
     return { hash, status, totalAmount };
   }
 
-  /** VALOR -> USDC: step 1 (min 500 VALOR, 5% fee, then 24h delay). */
+  /** VALOR -> USDC: step 1 (min 500 VALOR, then a 24h delay). */
   async initiateWithdrawal(valorAmount: number) {
     if (valorAmount < 500) throw new Error("minimum withdrawal is 500 VALOR");
     const pend = await this.api.get("/api/shop/valor/pending");
-    if (pend?.pending) throw new Error(`a withdrawal is already pending (${pend.pending.status})`);
-    const q = await this.api.post("/api/shop/valor/request-withdrawal", { valorAmount });
+    // A row with no initiatedAt is a quote whose on-chain tx never happened (e.g. the bot stopped in between).
+    // Its VALOR is already escrowed and there is no cancel endpoint, so resume it instead of stranding the balance.
+    const p = pend?.pending;
+    if (p?.initiatedAt) throw new Error(`a withdrawal is already in progress (${p.status})`);
+    // the API validates valorAmount as a string — sending a number fails with VALIDATION_ERROR
+    const q = p ?? await this.api.post("/api/shop/valor/request-withdrawal", { valorAmount: String(valorAmount) });
     const minNet = (BigInt(q.netUsdc) * 99n) / 100n; // same 1% guard as the client
     const hash = await this.write("initiateWithdrawal", { address: VALOR_VAULT, abi: valorVaultAbi, functionName: "initiateWithdrawal", args: [BigInt(q.grossUsdc), BigInt(q.deadline), minNet, q.signature] });
     await this.api.post("/api/shop/valor/confirm-initiation", { txHash: hash }, { retry: true });
@@ -226,6 +230,22 @@ export class ClaimsService {
     const r = await this.api.post("/api/keys/purchase-with-valor", { purchaseId: randomUUID(), quantity });
     const after = Number(r.newValorBalance ?? (await this.api.get("/api/shop/valor/balance")).valorBalance);
     return { quantity, keys: Number(r.newKeysBalance ?? 0), valorSpent: before - after, valor: after, raw: r };
+  }
+
+  /**
+   * Five skins burn into one new roll (REQUIRED_SKINS_FOR_RECYCLE in the client). Destructive and irreversible,
+   * and skins are not tradeable anywhere, so this is only ever triggered by hand from Telegram — never by autopilot.
+   */
+  async recycleSkins(skinIds?: number[]) {
+    const owned: number[] = (await this.api.get("/api/skins")).ownedSkins ?? [];
+    const ids = skinIds ?? owned.slice(0, 5);
+    if (ids.length < 5) return null;
+    const r = await this.api.post("/api/skins/recycle", { skinIds: ids });
+    return { used: ids.length, reward: r, owned };
+  }
+  async skins(): Promise<{ ownedSkins: number[]; equippedSkin: number }> {
+    const r = await this.api.get("/api/skins");
+    return { ownedSkins: r.ownedSkins ?? [], equippedSkin: Number(r.equippedSkin ?? 0) };
   }
 
   /** Deposit USDC.e into VALOR (100 VALOR = 1 USD, no fee) and confirm with the backend. */

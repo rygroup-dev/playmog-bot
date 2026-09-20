@@ -12,8 +12,10 @@ export interface RunSummary {
 }
 export interface GambleEvent { game: "ringrace" | "portalgambit"; phase: "bet" | "result"; wager: number; unit: "treasure" | "worldseed";
   outcome?: unknown; walletBefore?: number; walletAfter?: number; floor: number }
+/** Bounty (jackpot_minor/major/mega) and Throne wins — the two big prize events a run can produce. */
+export interface PrizeEvent { kind: string; floor: number; raw: any }
 export interface RunnerHooks { onTurn?: (t: { turn: number; reason: string; g: any; events: any[] }) => void; shouldStop?: () => boolean;
-  onGamble?: (e: GambleEvent) => void; log?: (m: string) => void }
+  onGamble?: (e: GambleEvent) => void; onPrize?: (e: PrizeEvent) => void; log?: (m: string) => void }
 
 export async function playRun(api: MogApi, runId: string, runType: RunType, hooks: RunnerHooks = {}, cfg: PolicyConfig = DEFAULT_POLICY): Promise<RunSummary> {
   const log = hooks.log ?? (() => {});
@@ -123,6 +125,10 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
         if (n >= 3) { mem.blacklist.set(tid, g.turnNumber + 15); noDmg.set(tid, 0); log(`blacklist ${tid} for 15 turns (no damage x3)`); }
       }
       for (const ev of r.events) {
+        if (/^(jackpot_(minor|major|mega)|throne_win|jackpot_claim)$/.test(ev.type)) {
+          log(`PRIZE: ${ev.type} ${JSON.stringify(ev).slice(0, 200)}`);
+          hooks.onPrize?.({ kind: ev.type, floor: g.currentFloor ?? 0, raw: ev });
+        }
         if ((ev.type === "trap_triggered" || (ev.type === "arrow_trap_triggered" && ev.playerHit)) && g.player) {
           const m = ev.type === "trap_triggered" ? mem.traps : mem.arrows; const f = g.currentFloor ?? 0;
           if (!m.has(f)) m.set(f, new Set());

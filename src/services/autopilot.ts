@@ -100,7 +100,14 @@ export class Autopilot {
       // never withdraw market capital; round down to a whole 100 VALOR and never ask for more than the balance
       const raw = valor - st.withdrawReserveValor - (mm?.enabled ? mm.capitalValor : 0);
       const amount = Math.floor(Math.min(raw, valor) / 100) * 100;
-      if (!pend?.pending && amount >= 500) {
+      // A quote that never made it on chain has its VALOR escrowed with no way to cancel — finish that one first,
+      // otherwise the balance is stuck and every later tick skips withdrawing entirely.
+      const stale = pend?.pending && !pend.pending.initiatedAt ? Number(pend.pending.valorAmount) : 0;
+      if (stale >= 500) {
+        const r = await this.claims.initiateWithdrawal(stale);
+        this.store.ledger("withdraw", -r.netUsdc, `resume ${stale} VALOR`, r.hash);
+        await this.notify(`🏦 <b>Penarikan VALOR dilanjutkan</b>: ${stale} VALOR → ≈$${r.netUsdc.toFixed(2)} USDC.e\nCair otomatis dalam 24 jam.`);
+      } else if (!pend?.pending && amount >= 500) {
         const r = await this.claims.initiateWithdrawal(amount);
         this.store.ledger("withdraw", -r.netUsdc, `auto ${amount} VALOR`, r.hash);
         await this.notify(`🏦 <b>Tarik VALOR otomatis</b>: ${amount} VALOR → ≈$${r.netUsdc.toFixed(2)} USDC.e\nCair otomatis dalam 24 jam.`);
@@ -309,6 +316,16 @@ export class Autopilot {
     return this.store.countSince(dayStart, "gamble_bet", "%");
   }
 
+  /** Bounty or Throne win: the two big payouts, both tied to the floor-10 boss. */
+  private async onPrize(e: import("../game/runner.js").PrizeEvent) {
+    const label = e.kind === "throne_win" ? "👑 THRONE" : e.kind === "jackpot_mega" ? "💎 BOUNTY MEGA"
+      : e.kind === "jackpot_major" ? "💰 BOUNTY MAJOR" : e.kind === "jackpot_minor" ? "🪙 BOUNTY MINOR" : "🎁 BOUNTY";
+    const amount = Number(e.raw?.amountValor ?? e.raw?.valor ?? e.raw?.amount ?? 0);
+    this.store.ledger("prize", amount / 100, `${e.kind} floor ${e.floor}`);
+    this.store.event("info", `prize ${e.kind}: ${JSON.stringify(e.raw).slice(0, 200)}`);
+    await this.notify(`${label} <b>MENANG!</b>\nFloor ${e.floor}${amount ? ` · <b>${amount} VALOR</b> (≈$${(amount / 100).toFixed(2)})` : ""}\n<code>${String(JSON.stringify(e.raw)).slice(0, 150)}</code>`);
+  }
+
   /** One bet or one result: booked in the ledger and pushed to Telegram, so nothing happens silently. */
   private async onGamble(e: import("../game/runner.js").GambleEvent) {
     const name = e.game === "ringrace" ? "Ringjak Derby" : "Portal Gambit";
@@ -337,6 +354,7 @@ export class Autopilot {
     try {
       summary = await playRun(this.api, runId, runType, {
         onGamble: (e) => void this.onGamble(e),
+        onPrize: (e) => void this.onPrize(e),
         log: this.log, shouldStop: () => this.stopRequested,
         onTurn: ({ g, reason }) => { if (this.running) Object.assign(this.running, { last: reason, floor: g.currentFloor, energy: g.player.energy, treasure: g.player.treasure }); },
       }, { ...DEFAULT_POLICY, acceptRooms: st.acceptRooms, gambleRingRace: st.gambleRingRace, gamblePortalGambit: st.gamblePortalGambit,

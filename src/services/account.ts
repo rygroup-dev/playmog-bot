@@ -9,6 +9,7 @@ export interface Snapshot {
   wallet?: { eth: string; usdc: string; arbEth?: string; rhEth?: string };
   valor?: number; pass?: any; keys?: number; expKeys?: number; items?: Record<string, number>;
   upvote?: any; claims?: any; earnings?: any; weekly?: any; expRun?: any; quests?: any;
+  prizes?: { bountyValor: number; bountyPaidValor: number; throneValor: number; throneEnabled: boolean; boostValor: number; boostsLeft: number };
   pool?: { poolValor: number; totalTreasure: number; valorPerTreasure: number; usdPerKeyEst: number; usdPerKeyTop: number; ownTreasurePerKey: number | null };
   activeRuns?: Record<string, any>; errors: string[];
 }
@@ -46,6 +47,14 @@ export async function snapshot(api: MogApi, abs: AbstractOps, ownTreasurePerKey:
       }
     }),
     task("earnings", async () => { s.earnings = await api.get("/api/claims/earnings"); }),
+    // The two big prizes a run can hit, both on the floor-10 boss: the Bounty pool (30% of every key sale,
+    // won by killing the rare Bounty Boss) and the Throne pool (80% to one winner who clears the run).
+    task("prizes", async () => {
+      const [j, t] = await Promise.all([api.get("/api/jackpot/pool"), api.get("/api/throne/campaign")]);
+      s.prizes = { bountyValor: Number(j.poolValor ?? 0), bountyPaidValor: Number(j.totalPaidValor ?? 0),
+        throneValor: Number(t.thronePoolValor ?? 0), throneEnabled: !!t.throneEnabled,
+        boostValor: t.boostEnabled ? Number(t.boostAmountValor ?? 0) : 0, boostsLeft: Number(t.boostsRemaining ?? 0) };
+    }),
     task("weekly", async () => { s.weekly = (await api.get(`/api/runs?mode=weekly&address=${addr}`)).userStats; }),
     task("expRun", async () => { s.expRun = (await api.get(`/api/runs?variant=ABSTRACT&mode=expedition&sortBy=treasure&address=${addr}`)).userRun; }),
     task("quests", async () => { s.quests = await api.get("/api/quests/board"); }),

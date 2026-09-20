@@ -243,7 +243,8 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       s.pool ? row("Pool", `${usd(s.pool.poolValor / 100, 0)} ÷ ${num(s.pool.totalTreasure)} treasure`) : "",
       s.pool ? row("EV Arcade (bot kita)", `<b>${usd(ev)}</b> / $1 key  ${bar(ev, 1.2, 8)} ${ev >= st.minPoolEvPerKey ? "🟢" : "🔴 di bawah ambang"}`) : "",
       s.pool ? row("EV pemain top", `${usd(s.pool.usdPerKeyTop)} · bot kita ${s.pool.ownTreasurePerKey ? num(s.pool.ownTreasurePerKey) : "?"} treasure/key`) : "",
-      row("Earnings total", `${num(Number(s.earnings?.totalValor ?? 0))} VALOR`),
+      row("Earnings total", `${num(Number(s.earnings?.totalValor ?? 0))} VALOR`)
+        + ` <i>(share ${num(Number(s.earnings?.breakdown?.treasureShare ?? 0))} · bounty ${num(Number(s.earnings?.breakdown?.bounties ?? 0))} · throne ${num(Number(s.earnings?.breakdown?.throne ?? 0))})</i>`,
       s.expRun ? row("Expedition best", `💎 ${num(s.expRun.treasure)} · rank <b>#${s.expRun.rank}</b>`) : "",
       row("Wallet penerima", dashLink === null ? "wallet bot (belum ada linked wallet)" : `<code>${shortAddr(dashLink)}</code>`),
       section("📈 Market-making"),
@@ -254,6 +255,11 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       section("🌍 World's Eve"),
       row("Worldseed", `<b>${num(mmLine.amber)}</b> · cache berikutnya ${num(Math.max(0, 500 - (mmLine.amber % 500)))} lagi`),
       row("Auto", `${on(st.autoWorld)} · maks ${st.worldBuysPerDay}×/hari @≤${num(st.worldKeyMaxPrice)} VALOR`),
+      section("👑 Hadiah besar (floor 10)"),
+      s.prizes ? row("Bounty pool", `<b>${num(s.prizes.bountyValor)}</b> VALOR (${usd(s.prizes.bountyValor / 100, 0)}) · sudah dibayar ${usd(s.prizes.bountyPaidValor / 100, 0)}`) : "",
+      s.prizes ? row("Throne pool", `${s.prizes.throneEnabled ? "🟢" : "⚫️"} <b>${num(s.prizes.throneValor)}</b> VALOR (${usd(s.prizes.throneValor / 100, 0)}) · 80% ke 1 pemenang`) : "",
+      s.prizes?.boostValor ? row("Boost throne", `+${num(s.prizes.boostValor)} VALOR · sisa ${s.prizes.boostsLeft}×`) : "",
+      "  <i>Bounty = bunuh Bounty Boss langka; Throne = tamatkan run. Bot otomatis lapor kalau kena.</i>",
       section("🤖 Autopilot 24 jam"),
       day.length ? pre(["MODE        RUN  TREASURE  MARBLE  BEST", ...day.map((r) => `${String(r.run_type).padEnd(10)} ${String(r.n).padStart(4)} ${String(r.treasure ?? 0).padStart(9)} ${String(r.marbles ?? 0).padStart(7)}  ${r.best} f${r.best_floor}`)]) : "  belum ada run",
       row("Belanja 24j", `${usd(spent24)} (cap Arcade ${usd(st.arcadeDailyUsdCap, 0)})`),
@@ -334,6 +340,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       api.get("/api/items/skinboxes").then((r) => r.balances ?? {}).catch(() => ({})),
       market.summary().catch(() => new Map()),
     ]);
+    const skins = await claims.skins().catch(() => ({ ownedSkins: [] as number[], equippedSkin: 0 }));
     const keep = new Set(["key.expedition", "pass.adventurer_mint", "item.golden_corn", ...(st.autoWorld ? ["key.world"] : [])]);
     const rows: string[] = []; let sellValue = 0;
     for (const [k, v] of Object.entries<any>(inv)) {
@@ -351,14 +358,17 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       row("Eve Key", `${eve} · harga pasar ${(book as Map<string, any>).get("key.world")?.lowestAsk ?? "-"} VALOR`),
       row("Expedition key", `${exp}`), row("Arcade key", `${arc}`), row("Tiket undian", `${tickets}`),
       row("Skin box", `${nBoxes}`),
+      row("Skin dimiliki", `${skins.ownedSkins.length}${skins.equippedSkin ? ` · dipakai #${skins.equippedSkin}` : ""}`
+        + ` — <i>kosmetik murni, tidak bisa dijual di market MoG maupun OpenSea/Magic Eden (bukan NFT). Satu-satunya guna: daur ulang 5 → 1 roll baru.</i>`),
       section("Item"),
       ...(rows.length ? rows : ["  (kosong)"]),
       section("Nilai jual"),
       row("Bisa dijual sekarang", `<b>${num(Math.round(sellValue))} VALOR</b> (${usd(sellValue / 100)})`),
       footer("Bot menjual loot otomatis tiap 30 menit di harga ask−1. Golden Corn & Mint Pass disimpan.")];
     const kb = new InlineKeyboard()
-      .text("💸 Jual loot sekarang", "a:sellLoot").text("🎁 Tukar worldseed", "a:redeem").row()
-      .text("📈 Market", "v:market").text("💰 Wallet", "v:wallet");
+      .text("💸 Jual loot sekarang", "a:sellLoot").text("🎁 Tukar worldseed", "a:redeem").row();
+    if (skins.ownedSkins.length >= 5) kb.text(`♻️ Daur ulang 5 skin (${skins.ownedSkins.length})`, "c:recycle").row();
+    kb.text("📈 Market", "v:market").text("💰 Wallet", "v:wallet");
     return { text: lines.join("\n"), kb: nav(kb, "v:inv") };
   }
 
@@ -983,6 +993,23 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
     if (have < 1) return ctx.answerCallbackQuery({ text: "Arcade key 0 — beli dulu di menu Keys", show_alert: true });
     await ctx.answerCallbackQuery({ text: "🎰 Memulai Arcade…" });
     void autopilot.createAndPlay("NORMAL", 1).catch((e) => notifyAll(`❌ ${esc(e.message)}`));
+  });
+  // Recycling burns 5 skins for one new roll. It cannot be undone and skins have no resale value anywhere,
+  // so it stays manual — the autopilot never touches it.
+  bot.callbackQuery("c:recycle", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const s = await claims.skins();
+    await edit(ctx, { text: `${header("⚠️", "DAUR ULANG SKIN")}\n${row("Dibakar", `<b>5 skin</b> dari ${s.ownedSkins.length} yang dimiliki`)}\n${row("Dapat", "1 roll skin baru (acak)")}\n${footer("Permanen, tidak bisa dibatalkan. Skin tidak bisa dijual di mana pun.")}`,
+      kb: new InlineKeyboard().text("✅ Daur ulang", "x:recycle").text("❌ Batal", "v:inv") });
+  });
+  bot.callbackQuery("x:recycle", async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "♻️ Mendaur ulang…" });
+    try {
+      const r = await claims.recycleSkins();
+      if (!r) return ctx.reply("ℹ️ Skin kurang dari 5, tidak bisa didaur ulang.");
+      store.event("info", `recycled skins ${r.used}: ${JSON.stringify(r.reward).slice(0, 200)}`);
+      await ctx.reply(resultCard("Daur ulang skin", [row("Dibakar", `${r.used} skin`), row("Hasil", `<code>${esc(JSON.stringify(r.reward).slice(0, 200))}</code>`)].join("\n")), { parse_mode: "HTML" });
+    } catch (e: any) { await ctx.reply(`❌ Gagal: ${esc(e.shortMessage ?? e.message)}`, { parse_mode: "HTML" }); }
   });
   bot.callbackQuery("c:corn", async (ctx) => {
     await ctx.answerCallbackQuery();
