@@ -52,27 +52,36 @@ export function killCost(e: any, c: Ctx) {
   return cost;
 }
 
+/**
+ * How much a unit of treasure is worth right now. Treasure only pays out when the run ENDS, and 43 of 45
+ * logged runs ended at energy ~1 — so while energy is short, loot must not be allowed to subsidise a fight
+ * that costs energy. Measured example: a mediumslime returns 2.8 orb-energy per kill and costs 4.9 damage
+ * (net -2.1), yet TPE alone scored it +2.8 because treasure covered the difference. 520 of those kills cost
+ * 2,530 energy across the logs. Full weight from 60 energy up, nothing at 0.
+ */
+export const lootWeight = (energy: number) => Math.max(0, Math.min(1, energy / 60));
+
 /** Expected value (EE) of killing enemy e: treasure + orbs + xp→energy + marbles (tiny). */
 export function killValue(e: any, c: Ctx) {
   if (e.id === "v2_jackalot" || e.spriteType === "v2_jackalot") return 200; // bounty roll + full energy restore
   const xp = e.spriteType === "v2_frogspawn" ? 60 : 15;
   const energy = 0.21 * smallOrb(c.floor) + 0.09 * largeOrb(c.floor) + xp * energyPerXp(c.level);
   const treasure = 0.66 * treasurePerDrop(c.floor) * c.treasureMult;
-  return energy + treasure / TPE + 0.28 * 0.5;                          // marbles ≈ small bonus
+  return energy + (treasure / TPE) * lootWeight(c.energy) + 0.28 * 0.5;  // marbles ≈ small bonus
 }
 
 export function breakValue(c: Ctx) {
   const energy = 0.16 * smallOrb(c.floor) + 0.07 * largeOrb(c.floor) + 0.09 * 25 * energyPerXp(c.level);
   const treasure = 0.48 * treasurePerDrop(c.floor) * c.treasureMult;
-  return energy + treasure / TPE + 0.23 * 0.3 - 0.05 * 4;              // corn bonus, 5% mimic risk
+  return energy + (treasure / TPE) * lootWeight(c.energy) + 0.23 * 0.3 - 0.05 * 4; // corn bonus, 5% mimic risk
 }
 
 export function pickupValue(p: any, c: Ctx) {
   const v = Number(p.value ?? 0);
   switch (p.type) {
     case "small_energy_orb": case "large_energy_orb": return v || (p.type === "small_energy_orb" ? smallOrb(c.floor) : largeOrb(c.floor));
-    case "treasure": return (v || treasurePerDrop(c.floor)) / TPE;
-    case "amber": return ((v || treasurePerDrop(c.floor) / 10) * 10) / TPE;   // worldseeds drop at 1/10 of treasure
+    case "treasure": return ((v || treasurePerDrop(c.floor)) / TPE) * lootWeight(c.energy);
+    case "amber": return (((v || treasurePerDrop(c.floor) / 10) * 10) / TPE) * lootWeight(c.energy); // worldseeds drop at 1/10 of treasure
     case "raffle_ticket": return 12;
     case "v2_xp_orb": return (v || 25) * energyPerXp(c.level);
     case "marble": return 1.5;
