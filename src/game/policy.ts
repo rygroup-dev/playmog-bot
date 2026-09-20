@@ -328,9 +328,12 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
       if (net >= 2) hasEnergyGoal = true;
     }
   }
-  // unexplored map holds more value; worth a few steps while energy is healthy
+  // Unexplored map is where the energy is: orbs returned 9,732 energy for 763 of walking across the run logs,
+  // and completed runs covered about twice the unique tiles per floor that dead runs did. A flat "only above 45
+  // energy" gate turned that into a death spiral — below it the bot stopped looking, so it stopped finding, so
+  // energy only fell further. affordable() already reserves the walk back to the stairs, so it is the real guard.
   const fr = frontier(b, dist);
-  if (fr && energy > 45 && affordable(fr.d)) goals.push({ k: fr.k, score: 2.5 - fr.d * 0.25, why: "explore" });
+  if (fr && energy > 20 && affordable(fr.d)) goals.push({ k: fr.k, score: 2.5 - fr.d * 0.25, why: "explore" });
   // walk up to a bounty chest: its 3x3 block is not walkable, so aim at a tile beside it
   for (const chest of b.chests) {
     for (const [dx, dy] of [[-2, 0], [2, 0], [0, -2], [0, 2], [-2, -1], [-2, 1], [2, -1], [2, 1], [-1, -2], [1, -2], [-1, 2], [1, 2]]) {

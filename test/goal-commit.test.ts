@@ -47,3 +47,27 @@ describe("the bot finishes the walk it started", () => {
     expect(second.action?.direction).not.toBe(dir);
   });
 });
+
+/**
+ * Energy orbs returned 9,732 energy for 763 of walking across the run logs, and completed runs covered
+ * about twice the unique tiles per floor. A flat "only explore above 45 energy" gate meant that below it
+ * the bot stopped looking, so it stopped finding, so energy only fell further. affordable() is the real
+ * guard: it already reserves the walk back to the stairs.
+ */
+describe("exploration does not switch off when energy dips", () => {
+  const dark = ["#############", "#@..........#", "#...........#", "#..........S#", "#############"];
+  const fogged = (energy: number) => {
+    const g: any = state(dark, {}, { energy });
+    g.fogMask = g.mapData.map((row: number[], y: number) => row.map((_: number, x: number) => (x <= 4 ? 2 : 0)));
+    return decide(g, undefined, newMemory()).reason;
+  };
+
+  it("still explores at 30 energy, where the old gate had already given up", () => {
+    expect(fogged(30)).toBe("explore");
+  });
+
+  it("falls back to the last-energy path once the reserve is gone", () => {
+    // not the ordinary explore goal any more: this is the deliberate spend-what-is-left branch
+    expect(fogged(8)).toBe("last-energy explore");
+  });
+});
