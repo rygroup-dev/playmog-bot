@@ -119,6 +119,14 @@ export class Autopilot {
     for (const pool of ["goldenCorn", "eveKeys", "genesis"] as const) {
       const r = await this.claims.raffleStatus(pool);
       const left = new Date(r.entryCloseTime).getTime() - Date.now();
+      // heads-up before the door closes, so nothing is missed if something goes wrong at the last minute
+      for (const h of [24, 6]) {
+        const key = `raffle.warned.${pool}.${r.weekNumber ?? 0}.${h}`;
+        if (r.ticketBalance > 0 && left > 0 && left < h * 3600e3 && !this.store.get<boolean>(key, false)) {
+          this.store.set(key, true);
+          await this.notify(`⏰ <b>Undian ${pool === "goldenCorn" ? "Golden Corn (WL Yield Fields)" : pool === "eveKeys" ? "Eve Key (WL Yield Fields)" : "Genesis Hero"}</b> tutup dalam ${Math.round(left / 3600e3)} jam.\nPunya kita: <b>${r.ticketBalance}</b> · bot memasukkan semuanya 3 jam sebelum tutup.`);
+        }
+      }
       if (r.ticketBalance > 0 && left > 0 && left < 3 * 3600e3) {
         await this.claims.enterRaffle(pool, r.ticketBalance);
         const after = await this.claims.raffleStatus(pool);
