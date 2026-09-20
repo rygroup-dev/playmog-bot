@@ -262,7 +262,7 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   // completed runs entered floor 5 with 92 energy, runs that died entered with 58.
   const bank = ENTRY_RESERVE[floorNow + 1] ?? 0;
   const belowBank = energy < bank;
-  let hasEnergyGoal = false;      // set while scoring pickups: is there still energy worth farming here?
+  let hasEnergyGoal = false;      // set while scoring pickups and breakables: is there still energy worth farming here?
   // Farming a floor has to stop paying eventually. Measured on the first two runs under the bank rule:
   // 176 turns on floor 6 burned 119 energy of walking to collect 92 of orbs, and 136 turns on floor 4 burned
   // 90 to collect 79 - both net losses. A completed run averages ~110 turns per floor, so past that the
@@ -318,7 +318,15 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
     if (bossAlive) break;                                              // boss first: no detours for pots
     const a = reachAdj(i); if (!a) continue;
     const net = bv - a.d;
-    if (net > 0 && affordable(a.d)) goals.push({ k: a.k, score: net, why: `goto ${i.type} (+${net.toFixed(1)})`, adjTarget: i });
+    if (net > 0 && affordable(a.d)) {
+      goals.push({ k: a.k, score: net, why: `goto ${i.type} (+${net.toFixed(1)})`, adjTarget: i });
+      // Breaking itself costs no energy, so a reachable pot is energy the floor still owes us. Completed runs
+      // broke ~2x as many objects per floor as runs that died (floor 4: 10.5 vs 4.9 breaks, 138 vs 50 orb
+      // energy), so an unbroken pot has to count as a reason to stay, exactly like a loose orb does.
+      // a pot is worth ~4.5 energy-equivalent, so the bar is lower than for a loose orb: breaking is free,
+      // only the walk costs anything.
+      if (net >= 2) hasEnergyGoal = true;
+    }
   }
   // unexplored map holds more value; worth a few steps while energy is healthy
   const fr = frontier(b, dist);

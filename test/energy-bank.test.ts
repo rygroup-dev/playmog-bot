@@ -14,6 +14,7 @@ function state(rows: string[], extra: Partial<any> = {}, player: Partial<any> = 
   rows.forEach((r, y) => { map.push([...r].map((ch, x) => {
     if (ch === "@") { px = x; py = y; }
     if (ch === "S") interactive.push({ id: "stairs_exit", type: "stairs", x, y });
+    if (ch === "p") interactive.push({ id: `pot_${x}_${y}`, type: "pot", x, y });
     return ch === "#" ? 1 : 0; })); });
   return { runId: "t", turnNumber: 10, currentFloor: 4, status: "IN_PROGRESS", mapData: map, fogMask: map.map((r) => r.map(() => 2)),
     tileData: map, wallTileData: map, interactive, enemies: [], pickups: [], pendingUpgradeOptions: [],
@@ -82,5 +83,25 @@ describe("the energy-bank hold has to stop", () => {
 
   it("reports why it left", () => {
     expect(spent([small])).toContain("habis digarap");
+  });
+});
+
+/**
+ * Completed runs cleared floors far more thoroughly than runs that died — same floor, same measurement:
+ *   floor 4: 10.5 objects broken vs 4.9, and 138 orb energy vs 50
+ *   floor 7:  9.5 vs 4.0, and 108 vs 29
+ * Breaking costs no energy, so an unbroken pot is energy the floor still owes us.
+ */
+describe("unbroken pots count as energy left on the floor", () => {
+  const withPot = ["##########", "#@..p....#", "#........#", "#........#", "#.......S#", "##########"];
+
+  it("holds the descent for a reachable pot, not just a loose orb", () => {
+    const g = state(withPot, {}, { energy: 40 });   // floor 4 -> floor 5 wants 85 banked
+    expect(decide(g).reason).not.toContain("stairs");
+  });
+
+  it("still leaves when the floor has neither pots nor orbs", () => {
+    const bare = ["##########", "#@.......#", "#........#", "#........#", "#.......S#", "##########"];
+    expect(decide(state(bare, {}, { energy: 40 })).reason).toContain("stairs");
   });
 });
