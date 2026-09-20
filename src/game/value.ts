@@ -5,6 +5,14 @@ import { enemyConfig } from "./model.js";
 /** Treasure-per-energy exchange rate: what one energy is worth in treasure when reinvested (measured ~3.7-4). */
 export const TPE = 4;
 
+/**
+ * Energy the run must hold before descending to floor f. Measured over 45 logged runs (scripts/analyze-runs.mjs):
+ * floors 5 and 10 are the two spikes. Completed runs entered f5 with 92 energy and f10 with 85; runs that died
+ * entered with 58 and 31. Floor 10 alone burns ~137 energy while its own drops only refund ~22.
+ * Only enforced while there is still energy worth farming on the current floor, so an exhausted floor never strands.
+ */
+export const ENTRY_RESERVE: Record<number, number> = { 5: 85, 6: 55, 7: 55, 8: 60, 9: 60, 10: 110 };
+
 // cumulative XP needed to reach level n (from level_up events)
 const XP_CUM = [0, 60, 125, 215, 325, 450, 595, 745, 905, 1080, 1315, 1560, 1830, 2120, 2440, 2790];
 /** energy gained per XP right now (+10 energy per level-up, level cap 15). */

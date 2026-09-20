@@ -166,7 +166,14 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
         hooks.onGamble?.({ game: game as any, phase: "result", wager: info.wager, unit, outcome, walletBefore: info.wallet, walletAfter: purse(g), floor: g.currentFloor ?? 0 });
       }
       hooks.onTurn?.({ turn: g.turnNumber, reason: dec.reason, g, events: r.events });
-      if (r.isGameOver) { endReason = "game_over"; break; }
+      if (r.isGameOver) {
+        // The server ends BOTH a win and a death with a game_over event; only its `reason` tells them apart
+        // ("completed" = full clear of floor 10). Reading just isGameOver recorded every win as a loss.
+        const go = r.events.find((e: any) => e.type === "game_over");
+        endReason = go?.reason === "completed" ? "completed" : go?.reason ? `game_over:${go.reason}` : "game_over";
+        log(`run ended: ${endReason} floor ${g.currentFloor ?? "?"}`);
+        break;
+      }
     } catch (e: any) {
       errStreak++;
       appendFileSync(file, JSON.stringify({ t: Date.now(), error: String(e?.message ?? e), code: e?.code, action: dec.action }) + "\n");

@@ -1,7 +1,7 @@
 import type { Action, RunAction } from "./room.js";
 import { Board, DIRS, dangerMap, dirTo, enemyConfig, footprint, isBigBoss, key, manhattan, step, type P } from "./model.js";
 import { chooseItem, ITEM_VALUE } from "./items.js";
-import { breakValue, killCost, killValue, pickupValue, weatherHitCost, type Ctx } from "./value.js";
+import { breakValue, ENTRY_RESERVE, killCost, killValue, pickupValue, weatherHitCost, type Ctx } from "./value.js";
 import talentTable from "./talents.json" with { type: "json" };
 
 /** Run-scoped memory the runner keeps between turns (anti-loop). */
@@ -250,13 +250,18 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   const maxE = g.player.maxEnergy ?? 100;
   // energy is also HP: the lower it is, the less damage we accept for a given reward
   let riskAversion = energy < 20 ? 3 : energy < 35 ? 1.8 : energy < 55 ? 1.2 : 1;
-  // Completion budget: floor 10 ends with Sir Jackalot (150 hp). Killing him costs roughly 8 hits and 2-3 of his
-  // swings, i.e. ~60 energy. From floor 8 the bot therefore treats energy below that budget as "low" for anything
-  // optional, so it arrives at the boss with something left instead of spending it on loot two rooms away.
+  // Completion budget, measured rather than guessed (scripts/analyze-runs.mjs over data/runs): clearing floor 10
+  // costs ~137 energy and the floor itself only refunds ~22, so the run must arrive there with a real bank.
+  // Runs that completed entered floor 10 with 85 energy (min 64); runs that died entered with 31 (min 10).
   const floorNow = g.currentFloor ?? 1;
   const bossAlive = (g.enemies ?? []).some((e: any) => isBigBoss(e) && (e.hp ?? 0) > 0);
-  const BOSS_BUDGET = 60;
-  if (floorNow >= 8 && energy < BOSS_BUDGET + 25) riskAversion *= 1.6;
+  const BOSS_BUDGET = 120;
+  if (floorNow >= 9 && energy < BOSS_BUDGET) riskAversion *= 1.6;
+  // Energy needed BEFORE taking the stairs down. The two spikes are floor 5 (16 of 43 deaths) and floor 10:
+  // completed runs entered floor 5 with 92 energy, runs that died entered with 58.
+  const bank = ENTRY_RESERVE[floorNow + 1] ?? 0;
+  const belowBank = energy < bank;
+  let hasEnergyGoal = false;      // set while scoring pickups: is there still energy worth farming here?
   const goals: { k: string; score: number; why: string; adjTarget?: any }[] = [];
   const reachAdj = (t: P) => {
     let best: { k: string; d: number } | null = null;
@@ -272,6 +277,13 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
     const isEnergy = !!p.type?.includes("energy_orb");
     // with the boss up, only energy is worth walking for — treasure can wait until he is down
     if (bossAlive && !isEnergy && d > 1) continue;
+    // Measured over 45 runs: treasure/amber/marble/corn returned ZERO energy for 1,699 energy of walking, while
+    // energy orbs returned 9,732 for 763. Treasure only pays out at the end of a run, so while the bank for the
+    // next floor is short, anything that is not energy has to be on the way (1 step) or it is skipped.
+    if (belowBank && !isEnergy && d > 1) continue;
+    // Only an orb that clearly beats its walk justifies holding the descent: measured, 33-41% of all energy lost
+    // is damage taken, so lingering on a picked-clean floor to scrape a marginal orb loses more than it gains.
+    if (isEnergy && pickupValue(p, ctx) > d * 1.5) hasEnergyGoal = true;
     // Walking is paid in energy, and energy is what buys the deeper floors where drops are worth more. A drop must
     // therefore beat its walk by a margin, not merely break even (measured: chasing drops was the single biggest
     // energy sink in every run). Energy orbs are exempt — they pay their own way back.
@@ -322,8 +334,14 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
     const n = step(me, d); const i = b.breakableAt.get(key(n.x, n.y));
     if (i && !here && bv > 0) return mk({ type: "break", direction: d, targetId: i.id }, `break ${i.type}`);
   }
-  // descend when nothing on this floor pays for itself (deeper floors drop ~+3 treasure per drop per floor)
-  if (stairsDist && stairsDist.k !== key(me.x, me.y) && energy > stairsDist.d) goals.push({ k: stairsDist.k, score: goals.length ? -1 : 1, why: `stairs ${stairsDist.id}` });
+  // descend when nothing on this floor pays for itself (deeper floors drop ~+3 treasure per drop per floor);
+  // but hold the descent while the next floor's measured entry bank is short AND energy is still farmable here —
+  // arriving at floor 5 or 10 underfunded is what ended 43 of 45 logged runs.
+  if (stairsDist && stairsDist.k !== key(me.x, me.y) && energy > stairsDist.d) {
+    const hold = belowBank && hasEnergyGoal;
+    goals.push({ k: stairsDist.k, score: hold ? -50 : goals.length ? -1 : 1,
+      why: hold ? `stairs ${stairsDist.id} (tunda, nabung ${energy}/${bank})` : `stairs ${stairsDist.id}` });
+  }
   // energy can't be banked: if stairs are out of reach, spend what is left on the best nearby value
   if (!goals.length) {
     for (const [k, p] of b.pickupAt) { const d = distAll.get(k); if (d !== undefined && d < energy) goals.push({ k, score: 50 - d * 4, why: `last-energy pickup ${p.type}` }); }
