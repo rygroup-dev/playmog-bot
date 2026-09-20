@@ -232,7 +232,7 @@ Every bet and every result is written to the ledger and sent to Telegram: the st
 
 ### Market-making
 
-Changed from **📈 Market**. Off until you fund it and switch it on.
+Changed from **📈 Market** with the ± buttons (capital, item count, units per item, loss limit). Off until you fund it and switch it on.
 
 | Setting | Default | What it does |
 |---|---|---|

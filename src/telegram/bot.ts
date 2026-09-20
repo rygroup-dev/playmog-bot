@@ -562,10 +562,15 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       pre(["ITEM            EDGE   %  UNIT/HARI  STATUS", ...(st.scores ?? []).slice(0, 9).map((x) => `${shortName(x.name).padEnd(15)}${String(Math.round(x.edge)).padStart(5)} ${String(Math.round(x.edgePct * 100)).padStart(3)} ${String(Math.round(x.unitsPerDay)).padStart(9)}  ${st.selected.includes(x.key) ? "✓ DIPILIH" : x.reason}`)]),
       ...(() => { const p = fundWatch?.plan(); if (!p) return [];
         return [row("Top-up terjadwal", p.doneAt ? `✅ selesai ${ago(p.doneAt)} (+${p.marketUsd} USD)` : `⏳ menunggu USDC.e baru ≥ $${p.marketUsd} → modal ${num(p.targetCapitalValor)} VALOR`)]; })(),
-      row("Aturan", `max ${c.maxAssets} item · 1 unit/item · stop-loss ${c.stopLossPct * 100}% · batas rugi ${usd(c.maxLossValor / 100, 0)}`),
+      row("Aturan", `max ${c.maxAssets} item · ${c.maxUnitsPerAsset} unit/item · stop-loss ${Math.round(c.stopLossPct * 100)}% · batas rugi ${usd(c.maxLossValor / 100, 0)}`),
+      valor < c.capitalValor ? `  ⚠️ <i>Modal disetel ${num(c.capitalValor)} VALOR tapi saldo cuma ${num(valor)} — bot hanya memakai yang ada.</i>` : "",
       footer("Notifikasi: order beli, terbeli, listing jual, terjual + profit.")];
     const kb = new InlineKeyboard()
       .text(c.enabled ? "⏸ Matikan market" : "▶️ Nyalakan market", "a:mmToggle").text("🧠 Scan ulang", "a:mmScan").row()
+      .text("➖500", "m:capitalValor:-500").text(`Modal ${num(c.capitalValor)}`, "noop").text("➕500", "m:capitalValor:500").row()
+      .text("➖", "m:maxAssets:-1").text(`${c.maxAssets} item`, "noop").text("➕", "m:maxAssets:1")
+      .text("➖", "m:maxUnitsPerAsset:-1").text(`${c.maxUnitsPerAsset} unit`, "noop").text("➕", "m:maxUnitsPerAsset:1").row()
+      .text("➖", "m:maxLossValor:-100").text(`Batas rugi ${usd(c.maxLossValor / 100, 0)}`, "noop").text("➕", "m:maxLossValor:100").row()
       .text("💵 Setor modal $15 → VALOR", "c:mmFund").row()
       .text("🛑 Batalkan semua order", "c:mmCancel");
     return { text: lines.join("\n"), kb: nav(kb, "v:market") };
@@ -668,6 +673,18 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
     await ctx.answerCallbackQuery({ text: `${k} = ${v}` });
     const back2 = k.startsWith("gamble") ? await vGamble() : vSettings();
     await edit(ctx, back2, k.startsWith("gamble") ? "gamble" : "set");
+  });
+  // market-making knobs (modal, jumlah item, unit, batas rugi)
+  bot.callbackQuery(/^m:(\w+):(-?\d+)$/, async (ctx) => {
+    const k = ctx.match[1] as keyof ReturnType<typeof market.cfg>; const d = Number(ctx.match[2]);
+    const limits: Record<string, [number, number]> = { capitalValor: [0, 50_000], maxAssets: [1, 6], maxUnitsPerAsset: [1, 5], maxLossValor: [100, 10_000] };
+    if (!(k in limits)) return ctx.answerCallbackQuery();
+    const cur = market.cfg(); const [lo, hi] = limits[k];
+    const v = Math.min(hi, Math.max(lo, (cur[k] as number) + d));
+    market.setCfg({ [k]: v } as any);
+    store.event("info", `mm setting ${k} -> ${v}`);
+    await ctx.answerCallbackQuery({ text: `${k} = ${v}` });
+    try { await edit(ctx, await vMarket(), "market"); } catch { /* unchanged */ }
   });
   bot.callbackQuery("noop", (ctx) => ctx.answerCallbackQuery());
 
