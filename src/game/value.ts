@@ -34,8 +34,12 @@ export function weatherHitCost(g: any): number {
   return kind === "miasma" ? 4 : kind === "heatwave" ? 3 : kind === "blizzard" ? 4 : 0;
 }
 
-/** Expected energy lost (damage + dodge steps) to kill enemy `e`, from its telegraph cycle. */
-export function killCost(e: any, c: Ctx) {
+/**
+ * Expected energy lost (damage + dodge steps) to kill enemy `e`, from its telegraph cycle.
+ * `approach` is how far we still have to walk to reach it, which only matters for attackers that can hit
+ * us on the way in.
+ */
+export function killCost(e: any, c: Ctx, approach = 0) {
   const cfg = enemyConfig(e);
   const hp = Math.max(1, e.hp ?? cfg?.hp ?? 20);
   const hits = Math.ceil(hp / Math.max(1, c.atk * 1.05));             // ~5% crit baseline
@@ -49,6 +53,13 @@ export function killCost(e: any, c: Ctx) {
   if (kind === "dash" || kind === "projectile" || kind === "reach") cost *= 1.3; // hits from range
   if (kind === "aoe" || kind === "explode") cost *= 1.2;
   if (kind === "spawner") cost += 6;
+  // Approach exposure. "Dies before it ever fires" only holds for a melee enemy we are already standing next
+  // to; a ranged attacker keeps shooting while we close the gap. Measured over the run logs this was the
+  // single worst mispricing in the model: skelearcher (projectile, 12-15 damage, dies in 2 hits so the fight
+  // itself scored 0) actually cost 9.4 energy per kill and 302 energy across 32 kills for 96 of orbs.
+  const reach = cfg?.attackRange ?? 1;
+  if (approach > reach && (kind === "projectile" || kind === "dash" || kind === "reach"))
+    cost += (dmg + (c.weatherHit ?? 0)) * Math.max(1, Math.floor((approach - reach) / (charge + rest)));
   return cost;
 }
 

@@ -307,7 +307,7 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
     const f = footprint(e); let a: { k: string; d: number } | null = null;
     for (let y = f.top; y <= f.bottom; y++) for (let x = f.left; x <= f.right; x++) { const c = reachAdj({ x, y }); if (c && (!a || c.d < a.d)) a = c; }
     if (!a) continue;
-    const cost = a.d + killCost(e, ctx) * riskAversion;
+    const cost = a.d + killCost(e, ctx, a.d) * riskAversion;
     if (!affordable(cost)) continue;
     const bonus = String(e.id).startsWith("v2_spawned_") ? 4 : 0;       // kill spawn to drop the spawner's shield
     const net = killValue(e, ctx) + bonus - cost;
