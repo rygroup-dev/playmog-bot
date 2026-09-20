@@ -22,6 +22,7 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
   let damageTaken = 0, unpredicted = 0, rttSum = 0, rttN = 0, endReason = "game_over", errStreak = 0, stuckStreak = 0;
   const mem = newMemory();
   const loggedFloors = new Set<number>();
+  const seenRooms = new Set<string>();
   const noDmg = new Map<string, number>(); // consecutive attacks on a target that did no damage
   let lastProgressTurn = g.turnNumber ?? 0, lastEnergy = g.player?.energy ?? 0, lastTreasure = g.player?.treasure ?? 0, lastFloor = g.currentFloor ?? 0;
 
@@ -35,6 +36,14 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
       endReason = "watchdog: no progress (run left open)"; break;
     }
     const dec = decide(g, cfg, mem);
+    const rt = g.v2CurrentRoomType ?? null;
+    if ((rt === "portalgambit" || rt === "ringrace") && !seenRooms.has(rt)) { // first sight: record the real shape
+      seenRooms.add(rt);
+      appendFileSync(file, JSON.stringify({ t: Date.now(), turn: g.turnNumber, roomSample: { room: rt, pos: [g.player.x, g.player.y],
+        portals: g.portals ?? [], wager: g.v2PortalGambitWager ?? g.v2RingRaceWager ?? null, row: g.v2PortalGambitRow ?? null,
+        pick: g.v2RingRacePick ?? null, interactive: (g.interactive ?? []).map((i: any) => [i.id, i.type, i.x, i.y]) } }) + "\n");
+      log(`room sample recorded: ${rt}`);
+    }
     const before = g;
     stuckStreak = dec.stuck ? stuckStreak + 1 : 0;
     if (dec.stuck && stuckStreak === 1) { // one-off snapshot so a stranded floor can be diagnosed afterwards

@@ -156,3 +156,25 @@ describe("gambling rooms", () => {
     expect((d.runAction as any)).toMatchObject({ type: "portal_gambit_bet", wager: 100 });
   });
 });
+
+describe("portal gambit navigation", () => {
+  const room = () => {
+    const g: any = state(["#######", "#.@...#", "#.....#", "#######"]);
+    g.v2CurrentRoomType = "portalgambit"; g.player.treasure = 1000;
+    return g;
+  };
+  it("steps into an adjacent portal once the bet is placed", () => {
+    const g = { ...room(), v2PortalGambitWager: 50, v2PortalGambitOutcome: null, v2PortalGambitRow: 1, portals: [{ id: "p1", x: 3, y: 1 }] };
+    expect(decide(g as any).action).toMatchObject({ type: "move", direction: "right", targetX: 3, targetY: 1 });
+  });
+  it("walks toward the nearest portal when none is adjacent", () => {
+    const g = { ...room(), v2PortalGambitWager: 50, v2PortalGambitOutcome: null, portals: [{ id: "p1", x: 5, y: 2 }] };
+    const d = decide(g as any);
+    expect(d.reason).toContain("portal gambit");
+    expect(d.action?.type).toBe("move");
+  });
+  it("still asks for the bet first", () => {
+    const g = { ...room(), v2PortalGambitWager: null, portals: [{ id: "p1", x: 3, y: 1 }] };
+    expect(decide(g as any).runAction).toMatchObject({ type: "portal_gambit_bet" });
+  });
+});

@@ -104,6 +104,19 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
       const want = cfg.gamblePortalGambit ? Math.max(1, Math.floor(wallet0 * Math.min(cfg.gambleWagerPct ?? 0.05, 0.1))) : 0;
       return { runAction: { type: "portal_gambit_bet", wager: want }, reason: want ? `portal gambit bet ${want}` : "portal gambit: no bet (pass through)", danger: dangerList };
     }
+    // bet placed: the game asks us to walk into one portal per row. Every portal in a row looks the same, so we
+    // take the nearest one (the wrong portal is chosen by the server, not readable from state).
+    if (rt === "portalgambit" && g.v2PortalGambitOutcome == null && (g.portals ?? []).length) {
+      const portals = (g.portals ?? []).filter((p: any) => typeof p.x === "number" && b.floor(p.x, p.y));
+      const adj = portals.find((p: any) => manhattan(me, p) === 1);
+      if (adj) return mk({ type: "move", direction: dirTo(me, adj)!, targetX: adj.x, targetY: adj.y }, `portal gambit: enter portal row ${g.v2PortalGambitRow ?? "?"}`);
+      const { prev: pp, dist: pd } = b.bfs(me, { throughEnemies: true });
+      const best = portals.map((p: any) => ({ p, d: pd.get(key(p.x, p.y)) ?? Infinity })).sort((a2: any, c2: any) => a2.d - c2.d)[0];
+      if (best && best.d < Infinity) {
+        const first = Board.firstStep(pp, me, key(best.p.x, best.p.y));
+        if (first) return mk({ type: "move", direction: dirTo(me, first)!, targetX: first.x, targetY: first.y }, `portal gambit: walk to portal (row ${g.v2PortalGambitRow ?? "?"})`);
+      }
+    }
   }
 
   // special rooms: shrine / armory interactions are "break" on chest NPCs (client eJ()); first hit inspects, second confirms
