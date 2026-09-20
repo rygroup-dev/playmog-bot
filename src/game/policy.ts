@@ -126,9 +126,12 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
   if (room === "shrine" || room === "armory") {
     const p = g.player;
     const targets = (g.interactive ?? []).filter((i: any) => room === "shrine"
-      ? i.v2NpcType === "shrine" && p.energy <= p.maxEnergy - 20 && wallet(g) >= scaled(g, shrineCost(p.v2ShrineUseCount ?? 0)) && shrineCost(p.v2ShrineUseCount ?? 0) <= 50
-      : typeof i.v2ArmoryItemId === "string" && scaled(g, i.v2ArmoryCost ?? 0) <= Math.max(scaled(g, 10), wallet(g) * 0.15) && wallet(g) >= scaled(g, i.v2ArmoryCost ?? 0)
-        && (ITEM_VALUE[i.v2ArmoryItemId] ?? 0) >= 6 && (p.items?.slots ?? []).filter((x: any) => x?.state === "unused").length < 2);
+      ? i.v2NpcType === "shrine" && p.energy <= p.maxEnergy - 20 && wallet(g) >= scaled(g, shrineCost(p.v2ShrineUseCount ?? 0))
+        && shrineCost(p.v2ShrineUseCount ?? 0) <= (p.energy < 40 ? 130 : p.energy < 60 ? 80 : 50)
+      // unknown item ids used to score 0 and were never bought (4 armory visits, 0 purchases). An unfamiliar item
+      // is worth a guess at a low price, so unknowns get a middling value instead of zero.
+      : typeof i.v2ArmoryItemId === "string" && scaled(g, i.v2ArmoryCost ?? 0) <= Math.max(scaled(g, 20), wallet(g) * 0.2) && wallet(g) >= scaled(g, i.v2ArmoryCost ?? 0)
+        && (ITEM_VALUE[i.v2ArmoryItemId] ?? 6) >= 6 && (p.items?.slots ?? []).filter((x: any) => x?.state === "unused").length < 2);
     for (const t of targets) {
       const d = dirTo(me, t);
       if (d) return mk({ type: "break", direction: d, targetId: t.id }, room === "shrine" ? `pray shrine (-${shrineCost(p.v2ShrineUseCount ?? 0)}T +20E)` : `buy ${t.v2ArmoryItemId} ${t.v2ArmoryCost}T`);
@@ -390,7 +393,7 @@ function wantsRoom(prompt: any, g: any, cfg: PolicyConfig) {
   if (!(cfg.acceptRooms ?? []).includes(rt)) return false;
   const p = g.player;
   if (rt === "shrine") return p.energy <= p.maxEnergy - 20 && wallet(g) >= scaled(g, shrineCost(p.v2ShrineUseCount ?? 0));
-  if (rt === "armory") return wallet(g) >= scaled(g, 60) && (p.items?.slots ?? []).filter((x: any) => x?.state === "unused").length < 2;
+  if (rt === "armory") return wallet(g) >= scaled(g, 30) && (p.items?.slots ?? []).filter((x: any) => x?.state === "unused").length < 2;
   return true; // jackalot etc.: movement is free inside
 }
 /** WORLD runs pay shrine/armory in amber (worldseeds) at 1/10 of the price (client fns eS / ex). */

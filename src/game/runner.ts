@@ -44,6 +44,14 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
     }
     const dec = decide(g, cfg, mem);
     const rt = g.v2CurrentRoomType ?? null;
+    if ((rt === "armory" || rt === "shrine") && !seenRooms.has(rt)) {   // record what the pedestals actually offer
+      seenRooms.add(rt);
+      appendFileSync(file, JSON.stringify({ t: Date.now(), turn: g.turnNumber, roomSample: { room: rt,
+        wallet: rt === "shrine" ? g.player?.treasure : g.player?.treasure, energy: g.player?.energy, shrineUses: g.player?.v2ShrineUseCount,
+        pedestals: (g.interactive ?? []).filter((i: any) => i.v2ArmoryItemId || i.v2NpcType)
+          .map((i: any) => ({ id: i.id, npc: i.v2NpcType, item: i.v2ArmoryItemId, cost: i.v2ArmoryCost, x: i.x, y: i.y })) } }) + "\n");
+      log(`room sample recorded: ${rt}`);
+    }
     if ((rt === "portalgambit" || rt === "ringrace") && !seenRooms.has(rt)) { // first sight: record the real shape
       seenRooms.add(rt);
       appendFileSync(file, JSON.stringify({ t: Date.now(), turn: g.turnNumber, roomSample: { room: rt, pos: [g.player.x, g.player.y],

@@ -36,3 +36,15 @@ describe("referral rules", () => {
     expect(existsSync(marker)).toBe(true); expect(readFileSync(marker, "utf8").trim()).toBe(ME);
   });
 });
+
+/** The installer writes REFERRAL_CODE= (empty). That must keep the default active, not disable it. */
+describe("installer-produced .env", () => {
+  it("an empty REFERRAL_CODE line still refers", async () => {
+    process.env.REFERRAL_CODE = "";                 // exactly what install.sh writes
+    expect(await referralCodeFor(fakeApi())).toBe(DEFAULT_REFERRAL_CODE);
+  });
+  it("an absent REFERRAL_CODE also refers", async () => {
+    delete process.env.REFERRAL_CODE;
+    expect(await referralCodeFor(fakeApi())).toBe(DEFAULT_REFERRAL_CODE);
+  });
+});
