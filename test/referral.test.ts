@@ -20,7 +20,9 @@ describe("referral rules", () => {
   it("never refers itself", async () => { expect(await referralCodeFor(fakeApi({ own: DEFAULT_REFERRAL_CODE }))).toBeNull(); });
   it("keeps a referrer the server already recorded", async () => { expect(await referralCodeFor(fakeApi({ referredBy: "SOMEONE1" }))).toBeNull(); });
   it("skips invalid codes", async () => { expect(await referralCodeFor(fakeApi({ valid: false }))).toBeNull(); });
-  it("can be disabled with an empty REFERRAL_CODE", async () => { process.env.REFERRAL_CODE = ""; expect(await referralCodeFor(fakeApi())).toBeNull(); });
+  it("keeps the default when REFERRAL_CODE is empty", async () => { process.env.REFERRAL_CODE = ""; expect(await referralCodeFor(fakeApi())).toBe(DEFAULT_REFERRAL_CODE); });
+  it("is disabled with REFERRAL_CODE=none", async () => { process.env.REFERRAL_CODE = "none"; expect(await referralCodeFor(fakeApi())).toBeNull(); });
+  it("is disabled with REFERRAL_CODE=off", async () => { process.env.REFERRAL_CODE = "off"; expect(await referralCodeFor(fakeApi())).toBeNull(); });
   it("honours a custom REFERRAL_CODE", async () => { process.env.REFERRAL_CODE = "friend99"; expect(await referralCodeFor(fakeApi())).toBe("FRIEND99"); });
   it("only the first account on a machine is referred", async () => {
     markReferralUsed("0x2222222222222222222222222222222222222222");

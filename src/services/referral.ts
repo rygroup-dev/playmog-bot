@@ -5,6 +5,7 @@
 //   * only the FIRST game account running on a machine uses the code (marker file in ~/.config/playmog-bot),
 //     so one person running several accounts refers at most one of them
 //   * the code must pass the game's own validation endpoint
+//   * REFERRAL_CODE unset or empty uses the default; "none" (or off/disabled/false/0) turns referrals off
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -14,7 +15,10 @@ export const DEFAULT_REFERRAL_CODE = "TMZA47S8";
 const markerPath = () => process.env.REFERRAL_MARKER ?? join(homedir(), ".config", "playmog-bot", "referral-account");
 
 export async function referralCodeFor(api: MogApi, log: (m: string) => void = () => {}): Promise<string | null> {
-  const code = (process.env.REFERRAL_CODE ?? DEFAULT_REFERRAL_CODE).trim().toUpperCase();
+  // unset or empty -> the project default (so a copied .env.example still refers); "none"/"off" turns it off
+  const raw = (process.env.REFERRAL_CODE ?? "").trim();
+  if (/^(none|off|disabled|false|0)$/i.test(raw)) return null;
+  const code = (raw || DEFAULT_REFERRAL_CODE).toUpperCase();
   if (!code) return null;
   const me = api.address.toLowerCase();
   const marker = markerPath();
