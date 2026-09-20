@@ -837,8 +837,19 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
   });
   bot.callbackQuery("a:redeem", async (ctx) => {
     await ctx.answerCallbackQuery({ text: "Menukar worldseed…" });
-    try { const r = await claims.redeemCaches(false); await ctx.reply(r ? resultCard("Cache ditukar", `${row("Jumlah", `${r.count} World's Eve Cache`)}\n${row("Sisa worldseed", num(r.amber))}`) : "ℹ️ Worldseed belum cukup (butuh 500 per cache).", { parse_mode: "HTML" }); }
-    catch (e: any) { await ctx.reply(`❌ ${esc(e.message)}`, { parse_mode: "HTML" }); }
+    try {
+      const r = await claims.redeemCaches(false);
+      const o = await claims.openCaches(false);            // a cache is only worth something once it is opened
+      const sb = await claims.openSkinBoxes().catch(() => null);
+      if (!r && !o) return void ctx.reply("ℹ️ Worldseed belum cukup (butuh 500 per cache) dan tidak ada cache yang belum dibuka.", { parse_mode: "HTML" });
+      await ctx.reply(resultCard("Cache", [
+        r ? row("Ditukar", `${r.count} World's Eve Cache · sisa worldseed ${num(r.amber ?? 0)}`) : "",
+        o ? row("Dibuka", `${o.opened} cache`) : "",
+        ...(o?.rewards ?? []).map((x: any) => `     ◦ ${x.qty}× ${esc(x.name)}`),
+        sb ? row("Kotak skin", sb.map((x: any) => `${x.opened}× ${esc(x.boxType)} → ${x.skins} skin`).join(", ")) : "",
+      ].filter(Boolean).join("\n")), { parse_mode: "HTML" });
+      if (store.settings().autoSellLoot) await market.sellLoot(["key.expedition", "pass.adventurer_mint", "item.golden_corn", ...(store.settings().autoWorld ? ["key.world"] : [])]).catch(() => {});
+    } catch (e: any) { await ctx.reply(`❌ ${esc(e.message)}`, { parse_mode: "HTML" }); }
   });
   bot.callbackQuery("c:world1", async (ctx) => {
     await ctx.answerCallbackQuery();
