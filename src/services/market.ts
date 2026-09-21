@@ -6,6 +6,8 @@ import { MogApi } from "../mog/api.js";
 import { Store } from "../db.js";
 
 const B = "/api/mog/marketplace";
+/** Assets the bot consumes itself: buying them as stock just feeds gameplay, it never becomes a resale. */
+const SELF_CONSUMED = new Set(["key.world", "key.expedition", "pass.adventurer_mint", "item.golden_corn"]);
 export interface MMConfig {
   enabled: boolean; assets: string[]; capitalValor: number; maxUnitsPerAsset: number;
   minEdgeValor: number; minEdgePct: number; stopLossPct: number; maxLossValor: number; sellRepriceMinutes: number;
@@ -16,7 +18,7 @@ export const DEFAULT_MM: MMConfig = {
   minEdgeValor: 20, minEdgePct: 0.05, stopLossPct: 0.10, maxLossValor: 300, sellRepriceMinutes: 30,
   autoSelect: true, maxAssets: 2, minUnitsPerDay: 50,
 };
-export interface AssetScore { key: string; name: string; bid: number; ask: number; edge: number; edgePct: number; unitsPerDay: number; usdPerDay: number;
+export interface AssetScore { key: string; name: string; bid: number; ask: number; edge: number; edgePct: number; sellRef?: number; unitsPerDay: number; usdPerDay: number;
   buyers: number; volatility: number; trendPct: number; score: number; reason: string }
 const LISTING = 0.01, SUCCESS = 0.04;
 const netOfSale = (price: number) => price - Math.max(1, Math.floor(price * LISTING)) - Math.floor(price * SUCCESS);
@@ -46,15 +48,25 @@ export class MarketMaker {
     const out: AssetScore[] = [];
     for (const a of assets) {
       if (!a.tradable || !a.highestBid || !a.lowestAsk) continue;
+      if (SELF_CONSUMED.has(a.assetKey)) continue;   // the bot plays these itself; stock would be eaten, not resold
       const bid = Number(a.highestBid), ask = Number(a.lowestAsk);
-      const edge = netOfSale(ask - 1) - (bid + 1), edgePct = edge / (bid + 1);
       const t: any = await this.api.get(`${B}/trades?assetKey=${a.assetKey}&assetType=${a.assetType}&limit=100`).catch(() => ({ trades: [] }));
       const tr: any[] = t.trades ?? [];
-      if (tr.length < 5) { out.push({ key: a.assetKey, name: a.displayName, bid, ask, edge, edgePct, unitsPerDay: 0, usdPerDay: 0, buyers: 0, volatility: 0, trendPct: 0, score: 0, reason: "terlalu sepi" }); continue; }
+      if (tr.length < 5) { out.push({ key: a.assetKey, name: a.displayName, bid, ask, edge: 0, edgePct: 0, unitsPerDay: 0, usdPerDay: 0, buyers: 0, volatility: 0, trendPct: 0, score: 0, reason: "terlalu sepi" }); continue; }
       const hrs = Math.max(1, (new Date(tr[0].createdAt).getTime() - new Date(tr.at(-1).createdAt).getTime()) / 3600e3);
       const units = tr.reduce((s2, x) => s2 + Number(x.quantity), 0), unitsPerDay = units / (hrs / 24);
       const usdPerDay = tr.reduce((s2, x) => s2 + Number(x.totalValor), 0) / 100 / (hrs / 24);
       const prices = tr.map((x) => Number(x.price)); const mean = prices.reduce((s2, x) => s2 + x, 0) / prices.length;
+      // The quoted ask is not a price we can sell at when the book is thin: gacha.gold showed ask 4,849 against
+      // a median trade of 1,400 and only four asks, which scored it 26,136 — fifteen times the next asset — on
+      // an edge of 3,196 that does not exist. Price the exit against what actually clears instead.
+      const sorted = [...prices].sort((x, y) => x - y);
+      const pct = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+      // p90, calibrated against what this bot has actually realised: 1,122 VALOR over 19 sales, about 59 a
+      // round trip. p75 priced every asset as edgeless, which the realised profit contradicts; the quoted ask
+      // priced gacha.gold at 3,196. p90 puts it at 131 and keeps the genuinely wide books in play.
+      const sellRef = Math.min(ask - 1, pct(0.90));
+      const edge = netOfSale(sellRef) - (bid + 1), edgePct = edge / (bid + 1);
       const volatility = Math.sqrt(prices.reduce((s2, x) => s2 + (x - mean) ** 2, 0) / prices.length) / mean;
       const n = Math.max(3, Math.floor(prices.length / 4));
       const recent = prices.slice(0, n).reduce((s2, x) => s2 + x, 0) / n, older = prices.slice(-n).reduce((s2, x) => s2 + x, 0) / n;
@@ -69,7 +81,7 @@ export class MarketMaker {
       else if (buyers < 8) reason = "pembeli sedikit";
       // expected profit/day if we win a small slice of the flow, penalised by risk
       const score = reason === "ok" ? edge * Math.min(unitsPerDay, 400) ** 0.5 * (1 - volatility) * (1 + Math.min(0, trendPct)) : 0;
-      out.push({ key: a.assetKey, name: a.displayName, bid, ask, edge, edgePct, unitsPerDay, usdPerDay, buyers, volatility, trendPct, score, reason });
+      out.push({ key: a.assetKey, name: a.displayName, bid, ask, edge, edgePct, sellRef, unitsPerDay, usdPerDay, buyers, volatility, trendPct, score, reason });
     }
     return out.sort((x, y) => y.score - x.score);
   }
@@ -256,7 +268,11 @@ export class MarketMaker {
           const stop = bid > 0 && bid < pos.cost * (1 - cfg.stopLossPct);
           // `ask` includes our own listing: if we already are the lowest ask, stay put (never undercut ourselves)
           const weAreBest = !!mySell && Number(mySell.price) <= ask;
-          const target = stop ? Math.max(1, bid + 1) : Math.max(ask > 0 ? ask - 1 : floorPrice, floorPrice);
+          // Undercutting the quoted ask is pointless when that ask never clears: gacha.gold's was 4,849 against
+          // a median trade of 1,400, so a sell at 4,848 just parks capital. Cap at what recent trades reach.
+          const ref = s.scores.find((x) => x.key === key)?.sellRef;
+          const wanted = ask > 0 ? Math.min(ask - 1, ref ?? Infinity) : floorPrice;
+          const target = stop ? Math.max(1, bid + 1) : Math.max(wanted, floorPrice);
           if (weAreBest && !stop) { /* keep listing */ }
           else if (!mySell || Date.now() - (s.lastSellPlaced[key] ?? 0) > cfg.sellRepriceMinutes * 60e3) {
             if (mySell) { await this.cancel(mySell.id); const i = orders.indexOf(mySell); if (i >= 0) orders.splice(i, 1); }
