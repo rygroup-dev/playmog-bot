@@ -80,6 +80,16 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
       endReason = "watchdog: no progress (run left open)"; break;
     }
     lastOnFloor = g;
+    // The first fountain attempt never fired even though the bot stood beside one five times with the right
+    // energy and no earlier branch returned. The floor snapshot says used:false, so record the object exactly
+    // as it looks at that moment instead of guessing why the check missed.
+    for (const o of g.interactive ?? []) {
+      if (o.type !== "fountain" && o.type !== "chest") continue;
+      if (Math.abs(o.x - g.player.x) + Math.abs(o.y - g.player.y) > 1) continue;
+      appendFileSync(file, JSON.stringify({ t: Date.now(), turn: g.turnNumber, floor: g.currentFloor,
+        adjacentObject: { raw: o, keys: Object.keys(o), used: o.used, usedType: typeof o.used,
+          state: o.state, pos: [g.player.x, g.player.y], energy: g.player.energy } }) + "\n");
+    }
     const dec = decide(g, cfg, mem);
     const rt = g.v2CurrentRoomType ?? null;
     if ((rt === "armory" || rt === "shrine") && !seenRooms.has(rt)) {   // record what the pedestals actually offer
