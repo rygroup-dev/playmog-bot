@@ -35,15 +35,45 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
   const noDmg = new Map<string, number>(); // consecutive attacks on a target that did no damage
   let lastProgressTurn = g.turnNumber ?? 0, lastEnergy = g.player?.energy ?? 0, lastTreasure = g.player?.treasure ?? 0, lastFloor = g.currentFloor ?? 0;
 
+  /**
+   * One line per floor listing everything the server says is on it. Without this the run log only carries
+   * enemies, so "what did this floor actually hold" could only be guessed at from what the bot happened to
+   * walk into — which is exactly the question when tuning how thoroughly a floor gets cleared.
+   */
+  const tally = (xs: any[], f: (x: any) => string) => {
+    const out: Record<string, number> = {};
+    for (const x of xs ?? []) { const k = f(x) || "?"; out[k] = (out[k] ?? 0) + 1; }
+    return out;
+  };
+  const snapshotFloor = (st: any, when: "masuk" | "keluar") => {
+    const w = st.v2Weather;
+    appendFileSync(file, JSON.stringify({ t: Date.now(), turn: st.turnNumber, floor: st.currentFloor, when, floorContents: {
+      room: st.v2CurrentRoomType ?? null,
+      weather: typeof w === "string" ? w : w?.type ?? null,
+      enemies: tally(st.enemies, (e) => String(e.spriteType ?? e.id).replace(/^v2_/, "")),
+      interactive: tally(st.interactive, (i) => String(i.v2NpcType ?? i.type)),
+      pickups: tally(st.pickups, (p) => String(p.type)),
+      traps: (st.traps ?? []).length, arrowTraps: (st.arrowTraps ?? []).length, portals: (st.portals ?? []).length,
+      energyOnFloor: (st.pickups ?? []).reduce((t: number, p: any) => t + (/energy_orb/.test(p.type ?? "") ? Number(p.value ?? 0) : 0), 0),
+    } }) + "\n");
+  };
+  snapshotFloor(g, "masuk");
+  let lastOnFloor = g;   // most recent state seen on the floor we are still on, dumped when we leave it
+
   for (let i = 0; i < 3000; i++) {
     if (hooks.shouldStop?.()) { endReason = "stopped_by_operator"; break; }
     if (g.status && g.status !== "IN_PROGRESS") { endReason = `status_${g.status}`; break; }
     // global watchdog: 60 turns with no energy/treasure/floor change = something we do not understand -> stop, keep run open
     if (g.player.energy !== lastEnergy || g.player.treasure !== lastTreasure || g.currentFloor !== lastFloor) {
+      // On arrival almost nothing is revealed yet and energy orbs do not exist at all — they are dropped by
+      // kills and breaks (pickup ids are enemy_loot_*, pot_*, item_crate_*). So the picture that matters is
+      // the one on the way out, once the floor has been uncovered and fought through.
+      if (g.currentFloor !== lastFloor) { snapshotFloor(lastOnFloor, "keluar"); snapshotFloor(g, "masuk"); }
       lastProgressTurn = g.turnNumber; lastEnergy = g.player.energy; lastTreasure = g.player.treasure; lastFloor = g.currentFloor;
     } else if (g.turnNumber - lastProgressTurn > (g.v2CurrentRoomType ? 150 : 60)) { // rooms have free movement
       endReason = "watchdog: no progress (run left open)"; break;
     }
+    lastOnFloor = g;
     const dec = decide(g, cfg, mem);
     const rt = g.v2CurrentRoomType ?? null;
     if ((rt === "armory" || rt === "shrine") && !seenRooms.has(rt)) {   // record what the pedestals actually offer

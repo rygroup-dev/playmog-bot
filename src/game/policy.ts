@@ -295,6 +295,10 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
     // energy orbs returned 9,732 for 763. Treasure only pays out at the end of a run, so while the bank for the
     // next floor is short, anything that is not energy has to be on the way (1 step) or it is skipped.
     if (belowBank && !isEnergy && d > 1) continue;
+    // Even with a healthy bank the detour has to stay short. Live run: floor 5 spent 39 of its 123 turns walking
+    // to treasure and died there with 105 energy of walking against 10 of orbs and not a single hit taken —
+    // energy was comfortable enough (79) that nothing capped the detour, and treasure never becomes energy.
+    if (!isEnergy && d > 3) continue;
     // Only an orb that clearly profits justifies holding the descent. A 1.5x margin still let the bot cross a
     // floor for a small orb (8 energy, 5 steps); it has to bank at least 4 net, and the walk itself is unsafe.
     if (isEnergy && pickupValue(p, ctx) - d >= 4) hasEnergyGoal = true;

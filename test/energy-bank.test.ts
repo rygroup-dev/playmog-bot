@@ -129,3 +129,27 @@ describe("farming stops when it stops paying", () => {
     expect(after(20, 60, 40)).not.toContain("stairs");   // too early to judge
   });
 });
+
+/**
+ * Live run: floor 5 burned 105 energy of walking against 10 of orbs and took no damage at all — it simply
+ * walked itself to death, 39 of its 123 turns heading for treasure. Energy was comfortable (79) so nothing
+ * capped the detour, and treasure never turns into energy inside a run.
+ */
+describe("a zero-energy drop is never worth a long walk", () => {
+  const wide3 = ["############", "#@.........#", "#..........#", "#..........#", "#.........S#", "############"];
+  // energy 90 puts the bank for the next floor comfortably in hand, so the older belowBank rule is not
+  // what is being tested here — only the unconditional detour cap.
+  const why = (p: any, energy = 90) => decide(state(wide3, { pickups: [p] }, { energy })).reason;
+
+  it("ignores treasure across the room even with a full bank", () => {
+    expect(why({ id: "t", type: "treasure", x: 9, y: 3, value: 28 })).not.toContain("treasure");
+  });
+
+  it("still takes treasure that is on the way", () => {
+    expect(why({ id: "t", type: "treasure", x: 3, y: 1, value: 28 })).toContain("treasure");
+  });
+
+  it("does not cap energy orbs the same way — they pay for the walk", () => {
+    expect(why({ id: "o", type: "large_energy_orb", x: 9, y: 3, value: 17 })).toContain("orb");
+  });
+});
