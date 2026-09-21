@@ -974,10 +974,11 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
     if (!p || p.expires < Date.now()) return ctx.answerCallbackQuery({ text: "Kedaluwarsa, ulangi.", show_alert: true });
     await ctx.answerCallbackQuery({ text: "Mengirim transaksi…" });
     try {
-      // always pay in VALOR (100/key, no gas); USDC.e only covers the shortfall
-      const st = store.settings(); const mm = market.cfg();
-      const reserveValor = st.withdrawReserveValor + (mm.enabled ? mm.capitalValor : 0);
-      const v = await claims.buyArcadeKeys(p.qty, { reserveValor, keepUsdc: st.worldUsdcReserve });
+      // Always pay in VALOR (100/key, no gas); USDC.e only covers the shortfall. A manual purchase from here is
+      // the owner's own decision, so it is not held back by the market-capital or withdraw reserves the way the
+      // autopilot's buying is — those exist to stop automation quietly draining the float.
+      const st = store.settings();
+      const v = await claims.buyArcadeKeys(p.qty, { reserveValor: 0, keepUsdc: st.worldUsdcReserve });
       store.ledger("buy_keys", v.valorSpent / 100, `${p.qty} arcade keys (VALOR${v.depositedUsd ? ` + $${v.depositedUsd} top-up` : ""}, manual)`, v.depositTx);
       cachedSnap = null;
       await ctx.reply(resultCard("Pembelian key", `${row("Dibeli", `${p.qty} key`)}\n${row("Bayar", `${num(v.valorSpent)} VALOR${v.depositedUsd ? ` (tambal $${v.depositedUsd} dari USDC.e)` : " · tanpa gas"}`)}\n${row("Saldo Arcade key", `<b>${v.keys}</b>`)}\n${row("Sisa VALOR", num(v.valor))}`), { parse_mode: "HTML" });
