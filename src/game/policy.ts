@@ -193,6 +193,22 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
       return mk({ type: "break", direction: d as any, targetId: chest.id }, `hit bounty chest (${chest.v2ChestHitsRemaining ?? "?"} left)`);
   }
 
+  // 2-fountain/chest. Two object types the policy never touched until the floor snapshots turned them up:
+  //   {"id":"fountain_0","type":"fountain","used":false}   on 6 of 9 floors in the floor-10 run
+  //   {"id":"chest_4","type":"chest","state":"closed"}
+  // Both carry a state flag, so both are meant to be used, and neither appears in the client bundle or in any
+  // capture we hold. Nothing says HOW, so try the shrine's interaction (break with a direction and the id)
+  // while standing next to one and let the server answer — the same way the bounty chest was worked out.
+  // A refusal is already handled: the runner logs the code and blacklists the target for 20 turns.
+  for (const o of g.interactive ?? []) {
+    const unused = (o.type === "fountain" && o.used === false) || (o.type === "chest" && o.state === "closed");
+    if (!unused) continue;
+    const d = DIRS.find((dd) => { const n = step(me, dd); return n.x === o.x && n.y === o.y; });
+    if (!d) continue;
+    if ((mem.blacklist.get(o.id) ?? -1) >= g.turnNumber) continue;        // server already said no
+    return mk({ type: "break", direction: d, targetId: o.id }, `try ${o.type} ${o.id}`);
+  }
+
   // 2-arena. Bounty arena with the boss dead: the exit gate (type "rock", v2IsGate) still blocks the stairs.
   // Try to break it when adjacent — the server tells us whether that is allowed, and the run logs the answer.
   if ((g.v2CurrentRoomType ?? null) === "jackalot" && !(g.enemies ?? []).some((e: any) => (e.hp ?? 0) > 0)) {
@@ -322,6 +338,17 @@ export function decide(g: any, cfg: PolicyConfig = DEFAULT_POLICY, mem: PolicyMe
     const bonus = String(e.id).startsWith("v2_spawned_") ? 4 : 0;       // kill spawn to drop the spawner's shield
     const net = killValue(e, ctx) + bonus - cost;
     if (net > 0) goals.push({ k: a.k, score: net, why: `engage ${short(e)} (+${net.toFixed(1)})` });
+  }
+  // Walk to an unused fountain while we are short of energy: `used:false` says it is a one-shot, it sits on
+  // 6 of 9 floors, and nothing we hold says what it gives. A short detour is a cheap way to find out, and the
+  // answer arrives in the run log either way.
+  if (energy < maxE - 20) {
+    for (const o of g.interactive ?? []) {
+      if (o.type !== "fountain" || o.used !== false) continue;
+      if ((mem.blacklist.get(o.id) ?? -1) >= g.turnNumber) continue;
+      const a = reachAdj(o); if (!a || a.d > 8 || !affordable(a.d)) continue;
+      goals.push({ k: a.k, score: 6 - a.d * 0.5, why: `goto fountain ${o.id}` });
+    }
   }
   const bv = breakValue(ctx);
   for (const [, i] of b.breakableAt) {
