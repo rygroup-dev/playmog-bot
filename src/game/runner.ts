@@ -40,6 +40,7 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
    * enemies, so "what did this floor actually hold" could only be guessed at from what the bot happened to
    * walk into — which is exactly the question when tuning how thoroughly a floor gets cleared.
    */
+  const KNOWN_INTERACTIVE = new Set(["pot", "crate", "stairs", "shrine", "armory", "jackalot"]);
   const tally = (xs: any[], f: (x: any) => string) => {
     const out: Record<string, number> = {};
     for (const x of xs ?? []) { const k = f(x) || "?"; out[k] = (out[k] ?? 0) + 1; }
@@ -54,6 +55,11 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
       interactive: tally(st.interactive, (i) => String(i.v2NpcType ?? i.type)),
       pickups: tally(st.pickups, (p) => String(p.type)),
       traps: (st.traps ?? []).length, arrowTraps: (st.arrowTraps ?? []).length, portals: (st.portals ?? []).length,
+      // One full sample of every interactive type the policy has no handling for. Floor snapshots turned up
+      // fountains on 6 of 9 floors and four chests on floor 9, and nothing in the code, the client bundle or
+      // the older captures says what either of them does — so record the object itself and find out.
+      unknown: (st.interactive ?? []).filter((i: any) => !KNOWN_INTERACTIVE.has(String(i.v2NpcType ?? i.type)))
+        .filter((i: any, n: number, all: any[]) => all.findIndex((o) => (o.v2NpcType ?? o.type) === (i.v2NpcType ?? i.type)) === n),
       energyOnFloor: (st.pickups ?? []).reduce((t: number, p: any) => t + (/energy_orb/.test(p.type ?? "") ? Number(p.value ?? 0) : 0), 0),
     } }) + "\n");
   };
