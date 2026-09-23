@@ -565,7 +565,8 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       row("Status", c.enabled ? (st.halted ? `🛑 ${esc(st.halted)}` : "🟢 berjalan tiap menit") : "⚫️ mati"),
       (() => { const m = market.status(); const l = (v: boolean | null) => v === false ? "🔴 tutup" : v ? "🟢 buka" : "⚪️ ?";
         return row("Server market", `order limit ${l(m.gtc)} · beli instan ${l(m.fok)}`); })(),
-      row("Modal", `${num(c.capitalValor)} VALOR (${usd(c.capitalValor / 100, 0)}) · saldo VALOR ${num(valor)}`),
+      row("Modal", c.capitalValor > 0 ? `${num(c.capitalValor)} VALOR (${usd(c.capitalValor / 100, 0)}) · saldo VALOR ${num(valor)}`
+        : `tanpa batas — dibatasi ${c.maxAssets} aset × ${c.maxUnitsPerAsset} unit · saldo VALOR ${num(valor)}`),
       row("Profit terealisasi", `<b>${pnl >= 0 ? "+" : ""}${num(pnl)} VALOR</b> (${pnl >= 0 ? "+" : ""}${usd(pnl / 100)})`),
       row("Belum terealisasi", `${r.unrealized >= 0 ? "+" : ""}${num(r.unrealized)} VALOR`),
       row("Transaksi", `${st.fills} fill · ${days.toFixed(1)} hari · ≈${usd(pnl / 100 / days)}/hari`),
@@ -585,7 +586,7 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       ...(() => { const p = fundWatch?.plan(); if (!p) return [];
         return [row("Top-up terjadwal", p.doneAt ? `✅ selesai ${ago(p.doneAt)} (+${p.marketUsd} USD)` : `⏳ menunggu USDC.e baru ≥ $${p.marketUsd} → modal ${num(p.targetCapitalValor)} VALOR`)]; })(),
       row("Aturan", `max ${c.maxAssets} item · ${c.maxUnitsPerAsset} unit/item · stop-loss ${Math.round(c.stopLossPct * 100)}% · batas rugi ${usd(c.maxLossValor / 100, 0)}`),
-      valor < c.capitalValor ? `  ⚠️ <i>Modal disetel ${num(c.capitalValor)} VALOR tapi saldo cuma ${num(valor)} — bot hanya memakai yang ada.</i>` : "",
+      c.capitalValor > 0 && valor < c.capitalValor ? `  ⚠️ <i>Modal disetel ${num(c.capitalValor)} VALOR tapi saldo cuma ${num(valor)} — bot hanya memakai yang ada.</i>` : "",
       footer("Notifikasi: order beli, terbeli, listing jual, terjual + profit.")];
     const kb = new InlineKeyboard()
       .text(c.enabled ? "⏸ Matikan market" : "▶️ Nyalakan market", "a:mmToggle").text("🧠 Scan ulang", "a:mmScan").row()

@@ -43,6 +43,9 @@ export class MarketMaker {
    * real throughput (units/day from the last 100 trades), distinct buyers, price volatility and trend.
    * Falling prices (trend < -8%) and thin or unaffordable books are rejected.
    */
+  /** capitalValor 0 means no cap: the real limit is then maxAssets x maxUnitsPerAsset at the going bid. */
+  private cap(cfg: MMConfig) { return cfg.capitalValor > 0 ? cfg.capitalValor : Infinity; }
+
   async scoreAssets(cfg: MMConfig): Promise<AssetScore[]> {
     const assets: any[] = (await this.api.get(`${B}/assets/summary`)).assets ?? [];
     const out: AssetScore[] = [];
@@ -73,7 +76,7 @@ export class MarketMaker {
       const trendPct = (recent - older) / older;
       const buyers = new Set(tr.map((x) => x.buyerUsername)).size;
       let reason = "ok";
-      if (bid + 1 > cfg.capitalValor * 0.7) reason = "harga > modal";
+      if (bid + 1 > this.cap(cfg) * 0.7) reason = "harga > modal";
       else if (edge < Math.max(cfg.minEdgeValor, (bid + 1) * cfg.minEdgePct)) reason = "spread tipis";
       else if (unitsPerDay < cfg.minUnitsPerDay) reason = "kurang laku";
       else if (trendPct < -0.08) reason = "harga turun";
@@ -233,7 +236,7 @@ export class MarketMaker {
         let tied = open.filter((o) => o.side === "BUY").reduce((t, o) => t + Number(o.price) * (Number(o.quantity) - Number(o.filledQty ?? 0)), 0)
           + Object.values(s.pos).reduce((t, p) => t + p.cost * p.qty, 0);
         for (const o of open.filter((x) => x.side === "BUY").sort((a2, b2) => Number(b2.price) - Number(a2.price))) {
-          if (tied <= cfg.capitalValor) break;
+          if (tied <= this.cap(cfg)) break;
           await this.cancel(o.id).catch(() => {});
           tied -= Number(o.price) * (Number(o.quantity) - Number(o.filledQty ?? 0));
           this.store.event("info", `mm capital lowered: cancelled BUY ${o.assetKey}@${o.price}`);
@@ -318,7 +321,7 @@ export class MarketMaker {
           else continue;
         }
         if (!edgeOk) continue;
-        if (committed() + buyAt > cfg.capitalValor || valor < buyAt) continue;
+        if (committed() + buyAt > this.cap(cfg) || valor < buyAt) continue;
         const r = await this.place("BUY", a, buyAt, 1);
         valor -= buyAt;
         if (!myBuy) await this.notify(`📝 <b>Market: pasang order beli</b> (belum terbeli) 1 × ${a.displayName} @ ${buyAt} VALOR (target jual ~${sellAt}, edge +${Math.round(edge)})`);

@@ -159,7 +159,9 @@ export class FundWatch {
     try {
       const r = await this.claims.depositValorUsd(p.marketUsd);
       const cfg = this.market.cfg();
-      this.market.setCfg({ capitalValor: Math.max(cfg.capitalValor, p.targetCapitalValor), maxAssets: Math.max(cfg.maxAssets, p.targetMaxAssets) });
+      // capitalValor 0 = uncapped on purpose; a funding plan must not quietly put a ceiling back on it
+      this.market.setCfg({ capitalValor: cfg.capitalValor === 0 ? 0 : Math.max(cfg.capitalValor, p.targetCapitalValor),
+        maxAssets: Math.max(cfg.maxAssets, p.targetMaxAssets) });
       this.store.ledger("mm_capital", p.marketUsd, "market capital top-up (plan)", r.hash);
       this.store.set("fund.plan", { ...p, doneAt: Date.now(), tx: r.hash });
       await this.notify([

@@ -319,6 +319,29 @@ Your own code and its stats are on the **🎫 Pass** page.
 
 ---
 
+## Game verification (since 2026-09-22)
+
+The game now runs a Cloudflare Turnstile human check and enforces it on **starting a run**:
+
+```
+POST /api/runs/create -> 403 GAME_VERIFICATION_REQUIRED
+GET  /api/game-verification -> {"mode":"enforce","siteKey":"0x4AAAAAA...","expiresAt":null}
+```
+
+Verified live on 2026-09-23: completing the check in a browser does **not** carry over to the
+bot's session — the account stayed at `expiresAt: null` afterwards, so the check is bound to the
+browser session, not the account. This bot will not solve or bypass it, and neither should you:
+the check exists to separate people from automation, and defeating it risks the account, the pass
+and the referral.
+
+What this means in practice:
+
+* **Unattended run farming is off.** The bot cannot start a run on its own any more.
+* **Everything else still works** — withdrawals, the marketplace maker, daily and weekly claims,
+  upvote, balances and the whole Telegram dashboard. All of that was re-verified on 2026-09-23.
+* The 403 only ever appears on `create`. Starting a run yourself in the browser, then letting the
+  bot resume and play it out, keeps the human check satisfied by an actual human.
+
 ## Honest expectations
 
 Paid Arcade runs pay back from a shared weekly pool, and on average that pool returns **less than you spend**. That is why Arcade is off by default and gated by the bot's own measured results. The realistic value comes from the free Expedition keys and the rewards the bot claims automatically. Market-making is experimental, so start small.
