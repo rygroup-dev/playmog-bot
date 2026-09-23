@@ -504,11 +504,11 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
     const lines = [header("⚙️", "PENGATURAN AUTOPILOT"),
       row("Klaim key harian", on(st.autoDaily)), row("Upvote mingguan", on(st.autoUpvote)),
       row("Main Expedition otomatis", `${on(st.autoExpedition)} (sisakan ${st.expeditionReserveKeys} key)`),
-      row("Arcade berbayar otomatis", on(st.autoArcade)),
+      row("Arcade: BELI key lalu main", `${on(st.autoArcade)} — pakai uang`),
       `     · ${st.arcadeKeysPerRun} key/run · cap ${usd(st.arcadeDailyUsdCap, 0)}/hari · EV min ${usd(st.minPoolEvPerKey)}`,
+      row("Arcade: main key sendiri", `${on(st.playOwnedArcadeKeys)} — gratis, key dari cache`),
       row("Ruang spesial", st.acceptRooms.length ? st.acceptRooms.join(", ") : "tidak (langsung turun floor)"),
       row("World's Eve otomatis", `${on(st.autoWorld)} · beli Eve Key maks ${st.worldBuysPerDay}×/hari @≤${num(st.worldKeyMaxPrice)} VALOR`),
-      row("Main Arcade key gratis", `${on(st.playOwnedArcadeKeys)} (key hasil cache, tanpa beli)`),
       row("Tukar worldseed → cache", on(st.autoRedeemCaches)), row("Jual loot otomatis", `${on(st.autoSellLoot)} (Eve Key & Mint Pass disimpan)`),
       row("Tarik VALOR otomatis", `${on(st.autoWithdraw)} (sisakan ${num(st.withdrawReserveValor)} VALOR untuk pass)`),
       row("Notif tiap run", on(st.notifyEveryRun)),
@@ -518,12 +518,15 @@ export function createBot(opts: { token: string; store: Store; api: MogApi; abs:
       footer("Arcade hanya jalan bila EV live ≥ ambang DAN belanja 24 jam < cap. Update game dicek tiap 5 menit.")];
     const kb = new InlineKeyboard()
       .text(`${check(st.autoDaily)} Harian`, "s:autoDaily").text(`${check(st.autoUpvote)} Upvote`, "s:autoUpvote").row()
-      .text(`${check(st.autoExpedition)} Expedition`, "s:autoExpedition").text(`${check(st.autoArcade)} Arcade`, "s:autoArcade").row()
+      .text(`${check(st.autoExpedition)} Expedition`, "s:autoExpedition").row()
+      // The two arcade switches sit together and say what they do: one spends money, one does not.
+      // Named "Arcade" and "Arcade gratis" on separate rows, they were read as the same setting.
+      .text(`${check(st.autoArcade)} Arcade: BELI key`, "s:autoArcade").text(`${check(st.playOwnedArcadeKeys)} Arcade: key sendiri`, "s:playOwnedArcadeKeys").row()
       .text("➖", "n:arcadeDailyUsdCap:-1").text(`Cap ${usd(st.arcadeDailyUsdCap, 0)}/hari`, "noop").text("➕", "n:arcadeDailyUsdCap:1").row()
       .text("➖", "n:arcadeKeysPerRun:-1").text(`${st.arcadeKeysPerRun} key/run`, "noop").text("➕", "n:arcadeKeysPerRun:1").row()
       .text("➖", "n:minPoolEvPerKey:-0.05").text(`EV ≥ ${usd(st.minPoolEvPerKey)}`, "noop").text("➕", "n:minPoolEvPerKey:0.05").row()
       .text(`${check(st.autoWorld)} World's Eve`, "s:autoWorld").text(`${check(st.autoRedeemCaches)} Tukar cache`, "s:autoRedeemCaches").row()
-      .text(`${check(st.autoSellLoot)} Jual loot`, "s:autoSellLoot").text(`${check(st.playOwnedArcadeKeys)} Arcade gratis`, "s:playOwnedArcadeKeys").row()
+      .text(`${check(st.autoSellLoot)} Jual loot`, "s:autoSellLoot").row()
       .text("➖", "n:worldBuysPerDay:-1").text(`Eve Key ${st.worldBuysPerDay}×/hari`, "noop").text("➕", "n:worldBuysPerDay:1").row()
       .text(`${check(st.autoWithdraw)} Tarik VALOR auto`, "s:autoWithdraw").text(`${check(st.notifyEveryRun)} Notif run`, "s:notifyEveryRun").row()
       .text("🔄 Cek update game sekarang", "a:gameCheck");
