@@ -25,6 +25,7 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
   let g = await connectWithRetry(room, log);
   const loot: Record<string, number> = {};
   let damageTaken = 0, unpredicted = 0, rttSum = 0, rttN = 0, endReason = "game_over", errStreak = 0, stuckStreak = 0;
+  let drainFrozen = 0, drainPrevEnergy = -1; // used to pass a truly-stuck run out to death instead of leaving it open
   const mem = newMemory();
   const loggedFloors = new Set<number>();
   const seenRooms = new Set<string>();
@@ -145,7 +146,17 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
         log("teleport escape used"); g = room.state; stuckStreak = 0; continue;
       } catch (e: any) { log(`teleport escape failed: ${e?.message ?? e}`); }
     }
-    if (stuckStreak > 2) { endReason = "stuck: no safe action (run left open, not drained)"; break; }
+    if (stuckStreak > 2) {
+      // Teleport (the one escape) is spent and nothing is reachable. Abandoning here would leave the run OPEN on
+      // the server, and there is no forfeit endpoint — an open run blocks creating every future run (409), which
+      // deadlocks the whole key queue. Passing costs energy, so pass out what is left until the game ends the run
+      // on its own; that frees the queue. Bail only if energy stops draining (a truly frozen tile).
+      if (drainPrevEnergy >= 0 && g.player.energy >= drainPrevEnergy) drainFrozen++; else drainFrozen = 0;
+      drainPrevEnergy = g.player.energy;
+      if (g.player.energy <= 0 || drainFrozen > 20) { endReason = "stuck: no safe action (run left open, not drained)"; break; }
+      dec.action = { type: "pass" }; dec.runAction = undefined;
+      dec.reason = "drain: no escape, passing out energy to end an unescapable run";
+    }
     try {
       if (dec.runAction) {
         const betGame = dec.runAction.type === "ring_race_bet" ? "ringrace" as const : dec.runAction.type === "portal_gambit_bet" ? "portalgambit" as const : null;
