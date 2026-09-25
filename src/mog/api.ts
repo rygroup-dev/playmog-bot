@@ -28,10 +28,15 @@ export class MogApi {
   private cookies = new Map<string, string>();
   private loginInFlight: Promise<void> | null = null;
   private versionRefreshed = false;
+  private verifier: (() => Promise<void>) | null = null;
   constructor(private account: PrivateKeyAccount, private opts: { timeoutMs?: number; log?: (m: string) => void } = {}) {}
 
   get address() { return this.account.address; }
   hasSession() { return this.cookies.has("siwe-session"); }
+
+  /** Register the game-verification solver (2captcha Turnstile). Called with the token-solving routine that
+   *  runs when a gated endpoint answers 403 GAME_VERIFICATION_REQUIRED; the request is retried after it resolves. */
+  setVerifier(fn: (() => Promise<void>) | null) { this.verifier = fn; }
 
   /** Unauthenticated fetch against the game host (used for the login nonce and the wallet-link nonce). */
   async raw(path: string, init: RequestInit = {}) {
@@ -83,6 +88,7 @@ export class MogApi {
     const method = (init.method ?? "GET").toUpperCase();
     const retries = (init.retry ?? method === "GET") ? 3 : 0;
     let relogged = false;
+    let reverified = false;
     for (let attempt = 0; ; attempt++) {
       let r: Response;
       try { r = await this.raw(path, init); }
@@ -93,6 +99,13 @@ export class MogApi {
       let body: any = null; try { body = text ? JSON.parse(text) : null; } catch { body = text; }
       if (!r.ok) {
         const code = body?.error?.code ?? (typeof body?.error === "string" ? body.error : null);
+        // The game gates create-run / room-join / world-eve actions behind a Cloudflare Turnstile human check.
+        // When set, solve it via 2captcha and retry the original request once (mirrors the site client's re-verify).
+        if (code === "GAME_VERIFICATION_REQUIRED" && this.verifier && !reverified) {
+          reverified = true;
+          try { await this.verifier(); attempt--; continue; }
+          catch (ve: any) { this.opts.log?.(`mog: game verification failed: ${ve?.message ?? ve}`); }
+        }
         if (code === "CLIENT_OUTDATED" && !this.versionRefreshed) {
           this.versionRefreshed = true;
           const v = await detectAppVersion();

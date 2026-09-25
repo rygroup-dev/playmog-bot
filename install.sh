@@ -126,6 +126,14 @@ ask TELEGRAM_BOT_TOKEN "  Telegram bot token"
 ask TELEGRAM_OWNER_IDS "  Your Telegram user id (empty = claim later with /claim)" ""
 ask MOG_USERNAME "  In-game username to register on first login (3-20 chars)" ""
 
+step "2captcha (needed to play)"
+cat > "$TTY" <<'TXT'
+  The game gates starting and joining a run behind a Cloudflare Turnstile human check.
+  The bot solves it with 2captcha.com. Sign up, top up a little balance, and paste the API key.
+  Leave empty to skip — the bot will still claim rewards, but it cannot run until you add a key later.
+TXT
+ask TWOCAPTCHA_API_KEY "  2captcha API key (empty = add later in .env)" ""
+
 step "Bot wallet"
 WALLET_PATH_REL="secrets/wallet.json"
 if [ -f "$WALLET_PATH_REL" ]; then
@@ -181,6 +189,8 @@ DB_PATH=data/bot.db
 MOG_USERNAME=$MOG_USERNAME
 REFERRAL_CODE=${REFERRAL_CODE:-}
 MOG_APP_VERSION=24
+TWOCAPTCHA_API_KEY=${TWOCAPTCHA_API_KEY:-}
+MOG_VERIFY_PAGEURL=https://playmog.xyz
 LOG_LEVEL=info
 ENV
 chmod 600 .env

@@ -106,6 +106,7 @@ SQLite store ──────┘                           ├─ Game room (C
   - **USDC.e** for Arcade keys, VALOR, passes or market capital.
   - You can also send ETH on Arbitrum or Robinhood Chain and bridge it from the bot.
 - An **Expedition Pass**, which is needed to keep Expedition loot. The free Expedition keys come from the pass daily drip and the weekly upvote.
+- A **[2captcha.com](https://2captcha.com) API key** with a little balance. The game gates starting and joining a run behind a Cloudflare Turnstile human check; the bot solves it through 2captcha. Without a key the bot still claims rewards but cannot run. Solving one Turnstile costs a fraction of a cent.
 
 ---
 
@@ -125,6 +126,7 @@ there is no root), clones the repo, installs the packages, then asks you for:
 | Telegram bot token | From [@BotFather](https://t.me/BotFather): `/newbot`, then copy the token |
 | Telegram user id | Optional. Leave empty and claim the bot later with `/claim` |
 | In-game username | Registered on the first login, 3–20 characters |
+| 2captcha API key | Needed to play (solves the Turnstile). Leave empty to add later in `.env` |
 | Wallet: **create** or **import** | `create` generates a fresh wallet; `import` takes an existing private key (hidden input) |
 | systemd service | Linux only: runs the bot on boot and restarts it on failure |
 
@@ -134,7 +136,7 @@ address to fund. Re-running it updates an existing install and never overwrites 
 For an unattended install, set the answers as environment variables first:
 
 ```bash
-TELEGRAM_BOT_TOKEN=123:ABC MOG_USERNAME=myname WALLET_MODE=create INSTALL_SERVICE=yes \
+TELEGRAM_BOT_TOKEN=123:ABC TWOCAPTCHA_API_KEY=abc123 MOG_USERNAME=myname WALLET_MODE=create INSTALL_SERVICE=yes \
   bash <(curl -fsSL https://raw.githubusercontent.com/rygroup-dev/playmog-bot/main/install.sh)
 ```
 
@@ -152,7 +154,7 @@ npm run new-wallet
 
 # 2) configure
 cp .env.example .env
-#    edit .env: TELEGRAM_BOT_TOKEN, and optionally TELEGRAM_OWNER_IDS
+#    edit .env: TELEGRAM_BOT_TOKEN, TWOCAPTCHA_API_KEY (needed to play), and optionally TELEGRAM_OWNER_IDS
 chmod 600 .env
 
 # 3) build, test, run
@@ -319,28 +321,36 @@ Your own code and its stats are on the **🎫 Pass** page.
 
 ---
 
-## Game verification (since 2026-09-22)
+## Game verification (Turnstile) — solved via 2captcha
 
-The game now runs a Cloudflare Turnstile human check and enforces it on **starting a run**:
+Since 2026-09-22 the game runs a Cloudflare Turnstile human check and enforces it on **starting and
+joining a run**:
 
 ```
-POST /api/runs/create -> 403 GAME_VERIFICATION_REQUIRED
-GET  /api/game-verification -> {"mode":"enforce","siteKey":"0x4AAAAAA...","expiresAt":null}
+POST /api/runs/create              -> 403 GAME_VERIFICATION_REQUIRED
+POST /api/runs/{id}/colyseus-token -> 403 GAME_VERIFICATION_REQUIRED
+GET  /api/game-verification         -> {"mode":"enforce","siteKey":"0x4AAAAAA...","expiresAt":null}
+POST /api/game-verification {token} -> marks the session verified until `expiresAt`
 ```
 
-Verified live on 2026-09-23: completing the check in a browser does **not** carry over to the
-bot's session — the account stayed at `expiresAt: null` afterwards, so the check is bound to the
-browser session, not the account. This bot will not solve or bypass it, and neither should you:
-the check exists to separate people from automation, and defeating it risks the account, the pass
-and the referral.
+The check is bound to the session, not the account, so it recurs and cannot be satisfied once in a
+browser. The bot handles it automatically: when any gated call returns `GAME_VERIFICATION_REQUIRED`,
+`src/mog/verify.ts` reads the live `siteKey`, solves the Turnstile through [2captcha](https://2captcha.com)
+(action `gameplay`, bound to `MOG_VERIFY_PAGEURL`), posts the token back to `/api/game-verification`,
+and the original request is retried. Solves are de-duplicated, so a create and a room-join that both
+need verification share one solve.
 
-What this means in practice:
+Set `TWOCAPTCHA_API_KEY` in `.env` to enable it. What happens in each case:
 
-* **Unattended run farming is off.** The bot cannot start a run on its own any more.
-* **Everything else still works** — withdrawals, the marketplace maker, daily and weekly claims,
-  upvote, balances and the whole Telegram dashboard. All of that was re-verified on 2026-09-23.
-* The 403 only ever appears on `create`. Starting a run yourself in the browser, then letting the
-  bot resume and play it out, keeps the human check satisfied by an actual human.
+* **With a key:** unattended run farming works — the bot creates, verifies, joins and plays runs on
+  its own, and re-solves whenever the session's verification expires.
+* **Without a key:** the bot logs the gate is manual and parks each run with a single Telegram
+  message. Everything else still works — withdrawals, the marketplace maker, daily/weekly claims,
+  upvote, balances and the whole dashboard.
+
+> **This defeats a bot-detection check.** The check exists to separate people from automation, and
+> solving it — like automating the game at all — can risk the account, the pass and the referral.
+> This is unofficial tooling; run it only on a dedicated account you can afford to lose.
 
 ## Honest expectations
 

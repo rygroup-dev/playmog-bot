@@ -12,6 +12,10 @@ const Env = z.object({
   DB_PATH: z.string().default("data/bot.db"),
   MOG_APP_VERSION: z.string().default("24"),
   LOG_LEVEL: z.string().default("info"),
+  // 2captcha Turnstile solver for the game's human-check gate (create run / join room / world-eve).
+  TWOCAPTCHA_API_KEY: z.string().default(""),
+  TWOCAPTCHA_SOFT_ID: z.string().default(""),
+  MOG_VERIFY_PAGEURL: z.string().default("https://playmog.xyz"),
 });
 export const env = Env.parse(process.env);
 export const ownerIdsFromEnv = env.TELEGRAM_OWNER_IDS.split(",").map((s) => s.trim()).filter(Boolean).map(Number);

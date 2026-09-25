@@ -3,6 +3,7 @@ import { env, ownerIdsFromEnv } from "./config.js";
 import { Store } from "./db.js";
 import { loadAccount } from "./util/wallet.js";
 import { MogApi } from "./mog/api.js";
+import { TwoCaptcha, GameVerifier } from "./mog/verify.js";
 import { AbstractOps } from "./chain/abstract.js";
 import { Autopilot } from "./services/autopilot.js";
 import { ClaimsService } from "./services/claims.js";
@@ -16,6 +17,15 @@ const log = (m: string) => logger.info(m);
 const store = new Store(env.DB_PATH);
 const account = loadAccount(env.WALLET_PATH);
 const api = new MogApi(account, { log });
+// Turnstile auto-solver for the game's human-check gate. Without a 2captcha key the gate stays manual.
+if (env.TWOCAPTCHA_API_KEY) {
+  const solver = new TwoCaptcha(env.TWOCAPTCHA_API_KEY, { softId: env.TWOCAPTCHA_SOFT_ID || undefined, log });
+  const verifier = new GameVerifier(api, solver, { pageurl: env.MOG_VERIFY_PAGEURL, action: "gameplay", log });
+  api.setVerifier(() => verifier.ensure());
+  log("mog: game-verification auto-solve enabled (2captcha)");
+} else {
+  log("mog: TWOCAPTCHA_API_KEY unset — game-verification gate stays manual");
+}
 const abs = new AbstractOps(account, log);
 
 let notify: (t: string, level?: string) => Promise<void> = async () => {};
@@ -32,6 +42,11 @@ tg.ensureClaimCode();
 void tg.setupProfile().catch((e) => log(`setupProfile: ${e.message}`));
 tg.bot.catch((e) => logger.error({ err: String(e?.message ?? e) }, "telegram update handler"));
 void tg.bot.start({ drop_pending_updates: true, onStart: (i) => log(`telegram @${i.username} online`) });
+// Tell the owner up front whether the bot can play: the game gates every run behind a Cloudflare Turnstile,
+// solved by 2captcha. Without the key the bot logs in but cannot create or join runs.
+void notify(env.TWOCAPTCHA_API_KEY
+  ? "🔓 <b>2captcha aktif</b> — Turnstile (create/join run) auto-solve nyala. Bot bisa main sendiri."
+  : "⚠️ <b>Butuh API 2captcha buat main</b> — <code>TWOCAPTCHA_API_KEY</code> belum diset, jadi Turnstile game-verification gak bisa di-solve dan run tidak akan jalan. Isi key di .env lalu restart.").catch(() => {});
 autopilot.start(60_000);
 // stall watchdog: if no tick completes for 10 minutes something is wedged (stalled HTTP, dead room) -> restart
 setInterval(() => {

@@ -61,6 +61,7 @@ export class Autopilot {
         // otherwise indistinguishable from no open run at all (2026-09-25 cost 15 minutes to that).
         this.log(`resume: ${t} run ${a.activeRun.id} floor ${a.activeRun.currentFloor ?? "?"}${abandoned ? " — SKIPPED (abandoned)" : this.running ? " — SKIPPED (already playing)" : ""}`);
         if (abandoned) continue;
+        this.lastError = null; // resuming a run is productive work — drop any stale tick error (e.g. a create 409)
         await this.play(a.activeRun.id, t, true); return;
       }
       if (st.autoExpedition) {
@@ -353,6 +354,7 @@ export class Autopilot {
 
   async createAndPlay(runType: RunType, keys: number) {
     const c = await this.api.post("/api/runs/create", { keysAmount: keys, runType });
+    this.lastError = null; // a fresh run started — clear any stale tick error surfaced in the menu
     this.store.event("info", `created ${runType} run ${c.runId} keys=${keys}`);
     await this.play(c.runId, runType, false);
   }
@@ -420,13 +422,13 @@ export class Autopilot {
     } catch (e: any) {
       const m = e instanceof MogApiError ? `${e.status} ${e.code}` : String(e?.message ?? e);
       this.store.event("error", `run ${runId}: ${m}`);
-      // The game gates joining a run behind its human check just as it gates creating one — verified on
-      // 2026-09-25: POST /api/runs/{id}/colyseus-token answers 403 GAME_VERIFICATION_REQUIRED even for a run the
-      // owner started by hand in a browser. Retrying cannot help and notified once a minute, so park the run.
+      // The game gates joining a run behind a Cloudflare Turnstile human check, same as creating one. The API
+      // client now auto-solves it via 2captcha and retries; reaching here means the solve was disabled or failed
+      // (no TWOCAPTCHA_API_KEY, wrong key, zero balance, timeout), so park the run and say why.
       if (e instanceof MogApiError && e.code === "GAME_VERIFICATION_REQUIRED") {
         this.store.set("runs.abandoned", [...this.store.get<string[]>("runs.abandoned", []), runId].slice(-50));
-        this.store.event("warn", `run ${runId} parked: joining needs the game's human check`);
-        await this.notify(`🚧 Run ${runType} ${runId.slice(-6)} tidak bisa diambil bot: masuk room juga butuh verifikasi manusia (403). Run ini dilepas, mainkan manual di browser.`, "warn");
+        this.store.event("warn", `run ${runId} parked: Turnstile solve unavailable`);
+        await this.notify(`🚧 Run ${runType} ${runId.slice(-6)} kena verifikasi Turnstile & solver gagal (cek TWOCAPTCHA_API_KEY / saldo 2captcha). Run dilepas.`, "warn");
       } else await this.notify(`❌ Run ${runType} ${runId.slice(-6)} error: ${m}`, "error");
     } finally { this.running = null; }
     return summary;
