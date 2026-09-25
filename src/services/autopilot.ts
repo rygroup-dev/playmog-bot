@@ -39,6 +39,7 @@ export class Autopilot {
         this.lastSlowTick = Date.now();
         await this.safe("weekly-claim", () => this.autoClaims());
         await this.safe("pass-reminder", () => this.passReminder());
+        await this.safe("weekly-reward", () => this.weeklyPassReward());
         await this.safe("daily-report", () => this.dailyReport());
         await this.safe("corn-raffle", () => this.autoRaffle());
         if (st0.autoRedeemCaches) await this.safe("redeem-caches", () => this.autoRedeem());
@@ -218,6 +219,22 @@ export class Autopilot {
   }
 
   /** Pass expiry reminders at 48h / 24h / 6h (each sent once per pass period). */
+  /**
+   * The pass pays a weekly reward (~300 VALOR was credited on 2026-09-25) through an endpoint the bot has never
+   * touched. GET /api/shop/pass/weekly-reward is the only method it accepts — POST answers 405 — and it reads
+   * null once the week's reward is settled, which is all we have ever seen it return. So it is unclear whether
+   * the GET is itself the claim or whether the credit is automatic, and guessing a claim endpoint would be
+   * inventing one. This polls it and records whatever comes back the first time it is not null, which turns the
+   * question into evidence instead of speculation. A GET cannot spend or lose anything.
+   */
+  async weeklyPassReward() {
+    const r = await this.api.get("/api/shop/pass/weekly-reward");
+    if (r == null) return null;
+    this.store.event("info", `pass weekly-reward payload: ${JSON.stringify(r).slice(0, 500)}`);
+    await this.notify(`🎁 <b>Weekly reward pass terdeteksi</b>\n<code>${esc(JSON.stringify(r).slice(0, 300))}</code>\nStrukturnya dicatat — beri tahu saya untuk menanganinya otomatis.`);
+    return r;
+  }
+
   async passReminder() {
     const pass = await this.api.get("/api/shop/pass");
     if (!pass?.isActive || !pass.expiresAt) return;
