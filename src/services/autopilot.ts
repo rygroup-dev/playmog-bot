@@ -18,10 +18,25 @@ export class Autopilot {
   lastTickAt = 0; lastError: string | null = null;
 
   private lastSlowTick = 0;
+  private slowTimer: NodeJS.Timeout | null = null;
+  private slowBusy = false;
   constructor(private api: MogApi, private abs: AbstractOps, private store: Store, private notify: Notifier, private log: (m: string) => void, readonly claims?: ClaimsService, readonly market?: MarketMaker) {}
 
-  start(intervalMs = 60_000) { this.timer = setInterval(() => void this.tick(), intervalMs); void this.tick(); }
-  stop() { if (this.timer) clearInterval(this.timer); this.timer = null; this.requestStopRun(); }
+  /**
+   * Two timers, not one. Claims used to sit at the end of the same serial tick that plays a run, so whichever ran
+   * first made the other wait: before 2026-09-25 a slow claim block could keep an open run from being picked up,
+   * and after the resume was moved ahead of it a playing run stopped the claims instead — a withdrawal sat
+   * INITIATED and unclaimed for exactly that reason. Money and gameplay now keep their own clocks.
+   */
+  start(intervalMs = 60_000) {
+    this.timer = setInterval(() => void this.tick(), intervalMs); void this.tick();
+    this.slowTimer = setInterval(() => void this.slowTick(), 5 * 60_000); void this.slowTick();
+  }
+  stop() {
+    if (this.timer) clearInterval(this.timer); this.timer = null;
+    if (this.slowTimer) clearInterval(this.slowTimer); this.slowTimer = null;
+    this.requestStopRun();
+  }
   requestStopRun() { this.stopRequested = true; }
 
   async tick() {
@@ -34,28 +49,18 @@ export class Autopilot {
       if (st.autoUpvote) await this.safe("upvote", () => this.upvote());
       await this.safe("quests", () => this.claimQuests());
       if (this.market) await this.safe("market", () => this.market!.tick());
-      const st0 = st;
-      if (Date.now() - this.lastSlowTick > 30 * 60_000) { // money claims + reminders every 30 min
-        this.lastSlowTick = Date.now();
-        await this.safe("weekly-claim", () => this.autoClaims());
-        await this.safe("pass-reminder", () => this.passReminder());
-        await this.safe("weekly-reward", () => this.weeklyPassReward());
-        await this.safe("daily-report", () => this.dailyReport());
-        await this.safe("corn-raffle", () => this.autoRaffle());
-        if (st0.autoRedeemCaches) await this.safe("redeem-caches", () => this.autoRedeem());
-        if (st0.autoSellLoot && this.market) await this.safe("sell-loot", async () => {
-          const keep = ["key.expedition", "pass.adventurer_mint", "item.golden_corn"];
-          if (st0.autoWorld) keep.push("key.world");                               // needed to play World's Eve
-          const wb = await this.api.get("/api/world-bonus").catch(() => null);
-          if (wb?.hasStakedHero) keep.push("energy.small", "energy.medium", "energy.large"); // gas refuels our heroes
-          await this.market!.sellLoot(keep);
-        });
-      }
-      // resume any run left open (crash/restart) before starting new ones
+      // An open run comes first. Since the game began gating run creation behind a human check, a run the owner
+      // started by hand is the only kind there is, and it is waiting on us — while the 30-minute claim block
+      // below can take a long time or, as seen on 2026-09-25, hang outright on an untimed chain read and never
+      // reach this point at all.
       for (const t of ["EXPEDITION", "NORMAL", "WORLD"] as RunType[]) {
         const a = await this.api.get(`/api/runs/active?runType=${t}`);
         if (!a.activeRun) continue;
-        if (this.store.get<string[]>("runs.abandoned", []).includes(a.activeRun.id)) continue; // sealed room etc: never retry
+        const abandoned = this.store.get<string[]>("runs.abandoned", []).includes(a.activeRun.id);
+        // Say out loud what we found and what we did with it: an open run that silently fails to be picked up is
+        // otherwise indistinguishable from no open run at all (2026-09-25 cost 15 minutes to that).
+        this.log(`resume: ${t} run ${a.activeRun.id} floor ${a.activeRun.currentFloor ?? "?"}${abandoned ? " — SKIPPED (abandoned)" : this.running ? " — SKIPPED (already playing)" : ""}`);
+        if (abandoned) continue;
         await this.play(a.activeRun.id, t, true); return;
       }
       if (st.autoExpedition) {
@@ -86,6 +91,31 @@ export class Autopilot {
   }
 
   /** Free money only costs gas: weekly pool payout, jackpot, finished VALOR withdrawals. */
+  /** Money and housekeeping, on its own clock so a run in progress can never hold it up (and vice versa). */
+  async slowTick() {
+    if (this.slowBusy) return;
+    this.slowBusy = true;
+    try {
+      const st = this.store.settings();
+      if (st.paused) return;
+      if (Date.now() - this.lastSlowTick < 30 * 60_000) return;
+      this.lastSlowTick = Date.now();
+      await this.safe("weekly-claim", () => this.autoClaims());
+      await this.safe("pass-reminder", () => this.passReminder());
+      await this.safe("weekly-reward", () => this.weeklyPassReward());
+      await this.safe("daily-report", () => this.dailyReport());
+      await this.safe("corn-raffle", () => this.autoRaffle());
+      if (st.autoRedeemCaches) await this.safe("redeem-caches", () => this.autoRedeem());
+      if (st.autoSellLoot && this.market) await this.safe("sell-loot", async () => {
+        const keep = ["key.expedition", "pass.adventurer_mint", "item.golden_corn"];
+        if (st.autoWorld) keep.push("key.world");                                 // needed to play World's Eve
+        const wb = await this.api.get("/api/world-bonus").catch(() => null);
+        if (wb?.hasStakedHero) keep.push("energy.small", "energy.medium", "energy.large"); // gas refuels our heroes
+        await this.market!.sellLoot(keep);
+      });
+    } finally { this.slowBusy = false; }
+  }
+
   async autoClaims() {
     if (!this.claims) return;
     const w = await this.claims.claimWeekly();
@@ -390,7 +420,14 @@ export class Autopilot {
     } catch (e: any) {
       const m = e instanceof MogApiError ? `${e.status} ${e.code}` : String(e?.message ?? e);
       this.store.event("error", `run ${runId}: ${m}`);
-      await this.notify(`❌ Run ${runType} ${runId.slice(-6)} error: ${m}`, "error");
+      // The game gates joining a run behind its human check just as it gates creating one — verified on
+      // 2026-09-25: POST /api/runs/{id}/colyseus-token answers 403 GAME_VERIFICATION_REQUIRED even for a run the
+      // owner started by hand in a browser. Retrying cannot help and notified once a minute, so park the run.
+      if (e instanceof MogApiError && e.code === "GAME_VERIFICATION_REQUIRED") {
+        this.store.set("runs.abandoned", [...this.store.get<string[]>("runs.abandoned", []), runId].slice(-50));
+        this.store.event("warn", `run ${runId} parked: joining needs the game's human check`);
+        await this.notify(`🚧 Run ${runType} ${runId.slice(-6)} tidak bisa diambil bot: masuk room juga butuh verifikasi manusia (403). Run ini dilepas, mainkan manual di browser.`, "warn");
+      } else await this.notify(`❌ Run ${runType} ${runId.slice(-6)} error: ${m}`, "error");
     } finally { this.running = null; }
     return summary;
   }

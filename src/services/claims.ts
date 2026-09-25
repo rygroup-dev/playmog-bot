@@ -16,6 +16,11 @@ const valorVaultAbi = parseAbi([
   "function finalizeWithdrawal()", "function canFinalizeWithdrawal(address) view returns (bool)",
 ]);
 
+/** Reject rather than hang forever: a chain read with no deadline can freeze the whole autopilot tick. */
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`${what} timed out after ${ms}ms`)), ms).unref())]);
+}
+
 export class ClaimsService {
   private pc = publicClient(ABS.chainId);
   private wc;
@@ -85,7 +90,10 @@ export class ClaimsService {
   }
   /** Step 2 once the delay has passed. Returns null when nothing is claimable. */
   async finalizeWithdrawalIfReady() {
-    const ready = await this.pc.readContract({ address: VALOR_VAULT, abi: valorVaultAbi, functionName: "canFinalizeWithdrawal", args: [this.account.address] });
+    // viem's readContract has no timeout of its own, and this one sits on the autopilot's critical path: on
+    // 2026-09-25 the tick went silent for seven minutes here, so a run the owner had started by hand was never
+    // picked up. A stalled RPC must cost us one tick, not the loop.
+    const ready = await withTimeout(this.pc.readContract({ address: VALOR_VAULT, abi: valorVaultAbi, functionName: "canFinalizeWithdrawal", args: [this.account.address] }), 20_000, "canFinalizeWithdrawal");
     if (!ready) return null;
     const hash = await this.write("finalizeWithdrawal", { address: VALOR_VAULT, abi: valorVaultAbi, functionName: "finalizeWithdrawal", args: [] });
     await this.api.post("/api/shop/valor/confirm-finalization", { txHash: hash }, { retry: true });

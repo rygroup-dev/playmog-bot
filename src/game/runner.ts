@@ -269,8 +269,15 @@ export async function playRun(api: MogApi, runId: string, runType: RunType, hook
 }
 
 async function connectWithRetry(room: GameRoom, log: (m: string) => void) {
+  // room.connect() has no deadline of its own. On 2026-09-25 the autopilot sat silent in it for minutes with no
+  // error and no retry log, so a run the owner had started by hand was never played — the likely cause being the
+  // browser still holding the room's seat. A join that does not land must cost one attempt, not the whole loop.
+  const connect = () => Promise.race([
+    room.connect(),
+    new Promise<never>((_, rej) => setTimeout(() => rej(new Error("room connect timed out after 45s")), 45_000).unref()),
+  ]);
   for (let i = 0; ; i++) {
-    try { return await room.connect(); }
+    try { return await connect(); }
     catch (e: any) {
       if (e instanceof MogApiError && e.status >= 400 && e.status < 500 && e.status !== 429 && e.status !== 401) throw e;
       if (i >= 6) throw e;
